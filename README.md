@@ -204,7 +204,7 @@ $$
 - 하는 일: bay 안(IFP) ∩ 모든 상주 NFP 밖의 정수 정점 후보 생성
 
 $$
-\bar L = \left\{\, (x,y)\in \mathrm{IFP}_{i,o,j} \;:\; (x,y)\notin \operatorname{int}\mathrm{NFP}(p_n, p_i^o)\ \ \forall\, p_n\in \mathrm{SB}[t] \,\right\}
+\bar L = \left\{\, (x,y) \in \mathrm{IFP}_{i,o,j} \;:\; (x,y) \notin \mathrm{int}\,\mathrm{NFP}(p_n, p_i^o) \ \ \forall\, p_n \in \mathrm{SB}[t] \,\right\}
 $$
 
 - **확정**: BLF seed(IFP 좌하단 코너) + 상주 NFP 경계 정점. 교점 추가는 미채택(후보수 대비 이득 적음).
