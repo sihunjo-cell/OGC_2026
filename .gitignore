@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.prof
+*.pyc
+
+# Competition-provided instance data (large; provided by the evaluation server)
+train/
+train_1/
+data/
+
+# Competition-provided tester + baseline + utils (external to this submission)
+ogc2026/
+
+# Dev artifacts: parameter sweeps, bet experiments, their reports and state
+_sweep*.py
+_bets.py
+_bet_run.py
+*_results*.jsonl
+*_status.txt
+*_pid.txt
+SWEEP_REPORT*.md
+BETS_REPORT.md
+
+# Editor / misc
+tempCodeRunnerFile.*
