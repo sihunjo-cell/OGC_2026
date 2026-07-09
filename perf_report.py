@@ -28,6 +28,7 @@ prob_1 부터 모든 인스턴스에 대해 성능을 측정하고, 성능 병�
 """
 
 import os
+from pathlib import Path
 
 # --- 절대경로 설정 (환경에 맞게 이 값들만 수정) --------------------------------
 PROJECT_ROOT  = r"c:\Users\simon\OGC_2026\OGC_2026"                    # 프로젝트 루트 (Phase0..Outer, myalgorithm.py)
@@ -37,6 +38,13 @@ PROB_DIRS     = [                                                      # 인스�
 ]
 BASELINE_DIR  = r"c:\Users\simon\OGC_2026\OGC_2026\ogc2026\baseline"   # utils.py(평가기) 폴백 위치
 OUT_DIR       = r"c:\Users\simon\OGC_2026\OGC_2026\perf_out"           # 결과/보고서 출력 폴더
+
+# Override the original author-specific paths with the current workspace.
+_HERE = Path(__file__).resolve().parent
+PROJECT_ROOT = str(_HERE)
+PROB_DIRS = [str(_HERE / "train")] if (_HERE / "train").is_dir() else []
+BASELINE_DIR = str(_HERE / "ogc2026" / "baseline")
+OUT_DIR = str(_HERE / "perf_out")
 
 ALNS_BUDGET_S = 8.0     # ALNS 처리량 측정용 문제당 예산(초). 늘리면 iters/s 추정이 안정적, 총 실행시간 증가.
 TOP_FUNCS     = 12      # 병목 상위 함수 개수 (per-prob & aggregate)
@@ -59,6 +67,7 @@ import time
 import pstats
 import cProfile
 import traceback
+import importlib.util
 import datetime as _dt
 
 # --- import 경로: 프로젝트 루트를 '맨 앞'에, baseline은 '맨 뒤'에 ----------------
@@ -77,7 +86,12 @@ try:
 except Exception:
     pass
 
-import utils  # 평가기 (baseline/utils.py)
+if not os.path.isfile(os.path.join(BASELINE_DIR, "utils.py")):
+    raise FileNotFoundError(f"baseline utils.py not found: {BASELINE_DIR}")
+_utils_spec = importlib.util.spec_from_file_location("perf_report_utils", os.path.join(BASELINE_DIR, "utils.py"))
+utils = importlib.util.module_from_spec(_utils_spec)
+sys.modules[_utils_spec.name] = utils
+_utils_spec.loader.exec_module(utils)
 
 # 솔버 진입점들 (프로젝트)
 from Phase0 import preprocess
@@ -416,7 +430,7 @@ def _warmup_jit(probs):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     jsonl_path = os.path.join(OUT_DIR, "perf_results.jsonl")
-    report_path = os.path.join(OUT_DIR, "perf_report.md")
+    report_path = os.path.join(OUT_DIR, "perf_report_revised.md")
     log_path = os.path.join(OUT_DIR, "perf_run.log")
 
     def log(msg):
