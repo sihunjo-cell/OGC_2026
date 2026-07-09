@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from . import geometry_query as gq
 from .candidates import candidate_positions
-from .scoring import placement_score
+from .scoring import (_contact_exact_top_k, _score_contact_exact,
+                      _score_contact_fast)
 
 
 def collision_oracle(i, o, pos_i, n, on, pos_n, pre, bbox_i=None, bbox_n=None) -> bool:
@@ -65,14 +66,22 @@ def place_block(i, j, residents, coords, orient, entry, exit_,
     m, G      : bay j에 지금까지 배치된 수, bay j 전체 블록 수 (S-curve용).
     """
     best = None
+    scored_fast = []
     # resident world bbox는 이 place_block 안에서 고정 -> 한 번만 미리 계산.
     resident_bbox = {n: gq.world_bbox(pre, n, orient[n], coords[n]) for n in residents}
     for o in range(gq.num_orientations(pre, i)):
         for pos in candidate_positions(i, o, j, residents, coords, orient, pre, cfg):
             if not _collision_free(i, o, pos, residents, coords, orient, pre, resident_bbox):
                 continue
-            s = placement_score(i, o, pos, j, residents, coords, orient, exit_,
-                                prob_info, pre, cfg, m, G)
-            if best is None or s > best.score:
-                best = Placement(s, pos, o)
+            ctx = (i, o, pos, j, residents, coords, orient, exit_,
+                   prob_info, pre, cfg, m, G)
+            fast_score = _score_contact_fast(ctx)
+            scored_fast.append((fast_score, pos, o, ctx))
+    if not scored_fast:
+        return None
+    scored_fast.sort(key=lambda item: item[0], reverse=True)
+    for _, pos, o, ctx in scored_fast[:_contact_exact_top_k(cfg)]:
+        s = _score_contact_exact(ctx)
+        if best is None or s > best.score:
+            best = Placement(s, pos, o)
     return best
