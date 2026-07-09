@@ -166,8 +166,8 @@ def realize(bay: list, prob_info: dict, pre, phase2cfg=None, deadline=None) -> S
     best_obj = float("inf")
     debug_rows = []
 
-    for cfg in _build_variant_cfgs(base_cfg, debug_enabled):
-        if deadline is not None and time.time() >= deadline:
+    for idx, cfg in enumerate(_build_variant_cfgs(base_cfg, debug_enabled)):
+        if idx > 0 and deadline is not None and time.perf_counter() >= deadline:
             if debug_enabled:
                 _emit_variant_debug("deadline_stop", {
                     "next_variant_id": cfg._variant_id,

@@ -1,108 +1,153 @@
 """
-Outer.portfolio -- ALNS 변형 4개를 같은 벽시계 시간 동안 병렬로 돌리고 최선을 취함
-(best-of-N은 어떤 단일 멤버보다도 나쁘지 않다).
-
-multiprocessing.Pool이 아니라 독립 OS 서브프로세스(Outer/worker.py)를 쓴다: 대회는
-algorithm()을 __main__(테스터 러너)에 `if __name__ == "__main__"` 가드가 없는
-서브프로세스에서 실행하는데, spawn Pool은 그 __main__을 워커마다 다시 import·실행해
-포트폴리오가 중첩된다. 독립 프로세스는 각자 가드된 __main__을 가져 이 문제가 없다.
-
-부모가 PRE를 한 번만 워밍·피클해 모든 워커가 뜨거운 NFP 캐시에서 시작하게 하여,
-4중 cold NFP 빌드 중복과 그 경합을 피한다.
+Outer.portfolio -- run ALNS portfolio members in parallel and keep the best result.
 """
 
 from __future__ import annotations
 
-import os
-import sys
 import json
-import time
-import pickle
-import tempfile
-import subprocess
+import os
 import pathlib
+import pickle
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
 
 from Phase0 import preprocess
 from Phase2 import Phase2Config
-from .config import OuterConfig
 from .alns import alns
+from .config import OuterConfig
 
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
 def default_portfolio() -> list:
-    """고분산 레버(jostle, forcing, 배치 순서) 스윕에서 한계 기여 방식으로 고른
-    4개 멤버 포트폴리오. 멤버 0은 안전한 기준선이라 포트폴리오 최선이
-    그보다 나빠지지 않는다."""
     return [
-        # 2.6   forcing         order   xi   seed
-        OuterConfig(xi=0.4, seed=0, phase2=Phase2Config(improve_mode="off",              forcing_mode="empty_bay")),                          # 하한 = 기준선(empty/area)
-        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(improve_mode="jostle_2exchange", forcing_mode="empty_bay")),                          # jostle/area (주력, 10승)
-        OuterConfig(xi=0.3, seed=4, phase2=Phase2Config(improve_mode="jostle_2exchange", forcing_mode="empty_bay",    order_mode="mst")),     # jostle + MST (5승)
-        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(improve_mode="off",              forcing_mode="earliest_slot", order_mode="mst")),    # earliest + MST (10승)
+        OuterConfig(
+            xi=0.4,
+            seed=0,
+            phase2=Phase2Config(improve_mode="off", forcing_mode="empty_bay"),
+        ),
+        OuterConfig(
+            xi=0.3,
+            seed=1,
+            phase2=Phase2Config(improve_mode="jostle_2exchange", forcing_mode="empty_bay"),
+        ),
+        OuterConfig(
+            xi=0.3,
+            seed=4,
+            phase2=Phase2Config(
+                improve_mode="jostle_2exchange",
+                forcing_mode="empty_bay",
+                order_mode="mst",
+            ),
+        ),
+        OuterConfig(
+            xi=0.5,
+            seed=5,
+            phase2=Phase2Config(
+                improve_mode="off",
+                forcing_mode="earliest_slot",
+                order_mode="mst",
+            ),
+        ),
     ]
 
 
-def _warm_cache(prob_info: dict, pre, cfg: OuterConfig):
-    """멤버 0의 초기해를 한 번 실행. 부수효과로 `pre`의 NFP 캐시를 채워 워커용
-    피클이 가능하게 한다. 보장된 기준선 하한으로 (objective, solution) 반환,
-    실패 시 (inf, None)."""
+def _warm_cache(prob_info: dict, pre, cfg: OuterConfig, deadline=None):
     from Phase1 import BuildBayAssignment
     from .realize import realize
-    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)   # phase1=None이면 기본값
-    s = realize(p1.bay, prob_info, pre, cfg.phase2)
+
+    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)
+    s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     return (s.objective, s.solution) if s.feasible else (float("inf"), None)
 
 
-def _run_single(prob_info: dict, wall_budget: float, cfg: OuterConfig, pre=None):
-    """멤버 하나를 프로세스 내에서 `wall_budget`초 동안 실행. 워밍된 `pre`가 주어지면
-    재사용(NFP 캐시 재계산 회피). (obj, sol|None) 반환."""
+def _run_single(prob_info: dict, wall_budget: float, cfg: OuterConfig, pre=None,
+                deadline=None, deadline_s=None):
     try:
-        t0 = time.time()
+        t0 = time.perf_counter()
         if pre is None:
             pre = preprocess(prob_info)
-        alns_budget = max(1.0, wall_budget - (time.time() - t0) - 3.0)
-        s, _ = alns(prob_info, pre, alns_budget, cfg)
+
+        alns_budget = None
+        if deadline is None:
+            alns_budget = max(1.0, wall_budget - (time.perf_counter() - t0) - 3.0)
+
+        s, _ = alns(
+            prob_info,
+            pre,
+            alns_budget,
+            cfg,
+            deadline=deadline,
+            deadline_s=deadline_s,
+        )
         return (s.objective if s.feasible else float("inf"), s.solution)
     except Exception:
         return (float("inf"), None)
 
 
 def optimize_portfolio(prob_info: dict, time_limit: float,
-                       configs: list = None, n_workers: int = 4) -> dict:
-    """기본 포트폴리오를 독립 서브프로세스로 돌려 최선의 실행가능해 operations dict를
-    반환. 부모는 NFP 캐시를 한 번 워밍하고 PRE를 워커용으로 피클하며, 그 기준선을
-    보장된 하한으로 유지한다. 커스텀 config, 단일 워커, 워밍/기동 실패 시에는
-    멤버 0의 프로세스 내 실행으로 폴백."""
+                       configs: list = None, n_workers: int = 4,
+                       deadline=None, deadline_s=None) -> dict:
     use_default = configs is None
     configs = configs or default_portfolio()
     n = len(configs)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
-    # -- 1) 공유 NFP 캐시 워밍 + 보장된 기준선 확보 ----------------------------
     warm_obj, warm_sol, pre = float("inf"), None, None
     try:
         pre = preprocess(prob_info)
-        warm_obj, warm_sol = _warm_cache(prob_info, pre, configs[0])
+        warm_obj, warm_sol = _warm_cache(prob_info, pre, configs[0], deadline=deadline)
     except Exception:
         pre = None
 
-    # 프로세스 내 경로: 커스텀 config(워커가 재구성 못 함), 병렬 없음, 또는 워밍
-    # 실패. 워밍된 pre로 순차 실행하고 기준선을 섞는다.
-    if not use_default or n_workers <= 1 or n == 1 or pre is None:
-        budget_left = max(1.0, time_limit - (time.time() - t0))
-        results = [_run_single(prob_info, budget_left, c, pre) for c in configs]
-        cands = [(o, s) for (o, s) in results if s is not None]
-        if warm_sol is not None:
-            cands.append((warm_obj, warm_sol))         # 기준선 하한
-        return min(cands, key=lambda r: r[0])[1] if cands else warm_sol
-
-    # 워밍이 예산을 (거의) 다 써서 워커가 realize 한 번도 못 끝냄 -- 대신
-    # 보장된 기준선을 반환
-    if warm_sol is not None and time_limit - (time.time() - t0) < 10.0:
+    if deadline is not None and time.perf_counter() >= deadline:
         return warm_sol
 
-    # -- 2) 워밍된 pre 피클 후 멤버마다 서브프로세스 하나씩 기동 ----------------
+    if not use_default or n_workers <= 1 or n == 1 or pre is None:
+        budget_left = max(1.0, time_limit - (time.perf_counter() - t0))
+        results = [
+            _run_single(
+                prob_info,
+                budget_left,
+                c,
+                pre,
+                deadline=deadline,
+                deadline_s=deadline_s,
+            )
+            for c in configs
+        ]
+        cands = [(o, s) for (o, s) in results if s is not None]
+        if warm_sol is not None:
+            cands.append((warm_obj, warm_sol))
+        return min(cands, key=lambda r: r[0])[1] if cands else warm_sol
+
+    remaining = time_limit - (time.perf_counter() - t0)
+    if deadline is not None:
+        remaining = min(remaining, deadline - time.perf_counter())
+
+    if warm_sol is not None and deadline is None and remaining < 10.0:
+        return warm_sol
+    if warm_sol is not None and deadline is not None and remaining <= 0.0:
+        return warm_sol
+    if warm_sol is not None and deadline is not None and remaining < 10.0:
+        obj, sol = _run_single(
+            prob_info,
+            remaining,
+            configs[0],
+            pre,
+            deadline=deadline,
+            deadline_s=deadline_s,
+        )
+        cands = [(warm_obj, warm_sol)]
+        if sol is not None:
+            cands.append((obj, sol))
+        return min(cands, key=lambda r: r[0])[1]
+    if deadline is not None and time.perf_counter() >= deadline:
+        return warm_sol
+
     tmpdir = tempfile.mkdtemp(prefix="ogc_pf_")
     prob_path = os.path.join(tmpdir, "prob.json")
     pre_path = os.path.join(tmpdir, "pre.pkl")
@@ -112,42 +157,61 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
         with open(pre_path, "wb") as f:
             pickle.dump(pre, f, protocol=pickle.HIGHEST_PROTOCOL)
     except Exception:
-        pre_path = ""     # 워커가 PRE를 직접 재계산
+        pre_path = ""
 
-    # 워커 예산 = 워밍 후 남은 벽시계 - 부모의 수거 마진
-    worker_wall = max(1.0, time_limit - (time.time() - t0) - _wrapup_margin(time_limit))
+    if deadline is not None:
+        worker_wall = max(1.0, deadline - time.perf_counter())
+    else:
+        worker_wall = max(1.0, time_limit - (time.perf_counter() - t0) - _wrapup_margin(time_limit))
 
-    procs = []           # (Popen, out_path) 목록
+    procs = []
     try:
         for i in range(n):
             out_path = os.path.join(tmpdir, f"out_{i}.json")
-            argv = [sys.executable, _WORKER, prob_path, str(i), str(worker_wall), out_path]
-            if pre_path:
-                argv.append(pre_path)
+            argv = [
+                sys.executable,
+                _WORKER,
+                prob_path,
+                str(i),
+                str(worker_wall),
+                out_path,
+                pre_path or "",
+                "" if deadline is None else str(deadline),
+                "" if deadline_s is None else str(deadline_s),
+            ]
             p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             procs.append((p, out_path))
     except Exception:
         for p, _ in procs:
-            try: p.kill()
-            except Exception: pass
-        import shutil
+            try:
+                p.kill()
+            except Exception:
+                pass
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return warm_sol if warm_sol is not None else \
-            _run_single(prob_info, worker_wall, configs[0], pre)[1]
+        return warm_sol if warm_sol is not None else _run_single(
+            prob_info,
+            worker_wall,
+            configs[0],
+            pre,
+            deadline=deadline,
+            deadline_s=deadline_s,
+        )[1]
 
-    # 수거: 각 워커는 worker_wall로 스스로 제한. 공동 마감까지 기다린 뒤
-    # 남은 프로세스는 kill.
-    deadline = time.time() + worker_wall + _wrapup_margin(time_limit)
+    wait_deadline = (
+        deadline + _wrapup_margin(time_limit)
+        if deadline is not None
+        else time.perf_counter() + worker_wall + _wrapup_margin(time_limit)
+    )
     for p, _ in procs:
-        remaining = max(1.0, deadline - time.time())
+        remaining = max(1.0, wait_deadline - time.perf_counter())
         try:
             p.wait(timeout=remaining)
         except Exception:
-            try: p.kill()
-            except Exception: pass
+            try:
+                p.kill()
+            except Exception:
+                pass
 
-    # 워커들과 기준선 중 최선(기준선 목적값으로 초기화해 워커는 실제로 더
-    # 나을 때만 이김)
     best_obj = warm_obj
     best_sol = warm_sol
     for _, out_path in procs:
@@ -159,12 +223,9 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
         except Exception:
             continue
 
-    import shutil
     shutil.rmtree(tmpdir, ignore_errors=True)
     return best_sol
 
 
 def _wrapup_margin(time_limit: float) -> float:
-    """부모가 수거 전 워커 벽시계 예산을 넘겨 기다리는 초 -- 기동 지연 + 파일
-    flush + 읽기를 커버. 상한을 두고 작게 유지."""
     return min(max(8.0, 0.03 * time_limit), 25.0)
