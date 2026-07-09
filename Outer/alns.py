@@ -27,7 +27,9 @@ def alns(prob_info: dict, pre, time_limit: float, cfg: OuterConfig = None, log=N
 
     # -- 초기 실행가능해 -------------------------------------------------------
     p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)
-    s = realize(p1.bay, prob_info, pre, cfg.phase2)
+    t0 = time.time()
+    deadline = t0 + time_limit
+    s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     s_best = s
 
     T = init_temperature(s.objective, cfg.w_pct)
@@ -37,13 +39,12 @@ def alns(prob_info: dict, pre, time_limit: float, cfg: OuterConfig = None, log=N
     stats = {"iters": 0, "accepted": 0, "improved": 0,
              "f0": s.objective, "f_best": s_best.objective, "traj": []}
 
-    t0 = time.time()
     it = 0
-    while time.time() - t0 < time_limit and (max_iters is None or it < max_iters):
+    while time.time() < deadline and (max_iters is None or it < max_iters):
         op_rem, op_ins = aos.select(rng)
         partial, D = destroy(s, op_rem, cfg, prob_info, pre, rng)
         bay2 = repair(partial, D, op_ins, cfg, prob_info, pre, rng)
-        s2 = realize(bay2, prob_info, pre, cfg.phase2)
+        s2 = realize(bay2, prob_info, pre, cfg.phase2, deadline=deadline)
 
         accepted = accept(s2.objective, s.objective, T, rng)
         aos.score_update(s2, s, s_best, op_rem, op_ins, accepted)

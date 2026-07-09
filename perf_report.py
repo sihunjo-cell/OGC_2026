@@ -424,7 +424,7 @@ def _warmup_jit(probs):
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     jsonl_path = os.path.join(OUT_DIR, "perf_results.jsonl")
-    report_path = os.path.join(OUT_DIR, "perf_report_newTop8strategy.md")
+    report_path = os.path.join(OUT_DIR, "perf_report_setLastObj.md")
     log_path = os.path.join(OUT_DIR, "perf_run.log")
 
     def log(msg):
