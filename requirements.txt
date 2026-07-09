@@ -1,0 +1,15 @@
+# Runtime dependencies for this solver, the official feasibility checker,
+# and the bundled local algorithm tester.
+#
+# Note:
+# - numba is optional in this codebase; the solver falls back to pure Python if it
+#   is unavailable.
+# - The current local venv uses Python 3.14, while the competition environment is
+#   Python 3.12. Numba 0.61.0 does not support Python 3.14, so it is omitted here.
+
+# Solver + checker
+numpy>=2.0
+shapely>=2.1.0
+
+# Local algorithm tester UI
+PyQt6==6.11.0

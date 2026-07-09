@@ -28,6 +28,7 @@ prob_1 부터 모든 인스턴스에 대해 성능을 측정하고, 성능 병�
 """
 
 import os
+from pathlib import Path
 
 # --- 절대경로 설정 (환경에 맞게 이 값들만 수정) --------------------------------
 PROJECT_ROOT  = r"c:\Users\simon\OGC_2026\OGC_2026"                    # 프로젝트 루트 (Phase0..Outer, myalgorithm.py)
@@ -37,6 +38,13 @@ PROB_DIRS     = [                                                      # 인스�
 ]
 BASELINE_DIR  = r"c:\Users\simon\OGC_2026\OGC_2026\ogc2026\baseline"   # utils.py(평가기) 폴백 위치
 OUT_DIR       = r"c:\Users\simon\OGC_2026\OGC_2026\perf_out"           # 결과/보고서 출력 폴더
+
+# Override the original author-specific paths with the current workspace.
+_HERE = Path(__file__).resolve().parent
+PROJECT_ROOT = str(_HERE)
+PROB_DIRS = [str(_HERE / "train")] if (_HERE / "train").is_dir() else []
+BASELINE_DIR = str(_HERE / "ogc2026" / "baseline")
+OUT_DIR = str(_HERE / "perf_out")
 
 ALNS_BUDGET_S = 8.0     # ALNS 처리량 측정용 문제당 예산(초). 늘리면 iters/s 추정이 안정적, 총 실행시간 증가.
 TOP_FUNCS     = 12      # 병목 상위 함수 개수 (per-prob & aggregate)
