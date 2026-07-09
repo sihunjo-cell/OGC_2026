@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 @dataclass
 class Phase2Config:
-    phase2_variant_topks: tuple = (8, 16, 32)  # FIXME
+    phase2_variant_topks: tuple = (4, 8, 16,)  # FIXME
 
     # Strategy toggles
     improve_mode: str = "off"           # "off" | "jostle_2exchange"

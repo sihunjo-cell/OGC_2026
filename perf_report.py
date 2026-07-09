@@ -156,6 +156,12 @@ def load_done(jsonl_path):
     return done
 
 
+def _has_final_alns_metrics(rec):
+    return ("alns_utils_objective" in rec and
+            "alns_utils_Z1" in rec and
+            "alns_best_forced" in rec)
+
+
 # ---------------------------------------------------------------------------
 # 측정: 문제 하나
 # ---------------------------------------------------------------------------
@@ -197,14 +203,14 @@ def run_one(path):
         Z1 = res.Z1 if (feasible and res.Z1 is not None) else None
         Z2, Z3 = p1out.Z2, p1out.Z3
         rec["construct_feasible"] = feasible
-        rec["Z1"], rec["Z2"], rec["Z3"] = Z1, Z2, Z3
-        rec["forced"] = len(res.info.get("forced", []))
+        rec["construct_Z1"], rec["construct_Z2"], rec["construct_Z3"] = Z1, Z2, Z3
+        rec["construct_forced"] = len(res.info.get("forced", []))
         rec["construct_objective"] = (w1 * Z1 + w2 * Z2 + w3 * Z3) if feasible else None
 
         # 평가기(utils) 교차검증 (내부 판정과 서버 판정 일치 확인)
         chk = utils.check_feasibility(prob, res.solution)
-        rec["utils_feasible"] = bool(chk["feasible"])
-        rec["utils_objective"] = chk["objective"]
+        rec["construct_utils_feasible"] = bool(chk["feasible"])
+        rec["construct_utils_objective"] = chk["objective"]
 
         # ---- 병목: warm realize 1회 cProfile (NFP 캐시는 위에서 채워짐) ----
         pr = cProfile.Profile()
@@ -225,6 +231,25 @@ def run_one(path):
         rec["alns_fbest"] = fbest
         rec["alns_improve_pct"] = ((f0 - fbest) / f0 * 100.0) if (f0 and fbest is not None and f0 > 0) else None
         rec["alns_feasible"] = bool(getattr(s_best, "feasible", False))
+        rec["alns_best_forced"] = getattr(s_best, "forced", None)
+        rec["alns_best_Z1"] = getattr(s_best, "Z1", None)
+        rec["alns_best_Z2"] = getattr(s_best, "Z2", None)
+        rec["alns_best_Z3"] = getattr(s_best, "Z3", None)
+        rec["alns_best_objective"] = getattr(s_best, "objective", None)
+        rec["alns_best_solution_returned"] = bool(getattr(s_best, "solution", None) is not None)
+        if getattr(s_best, "solution", None) is not None:
+            alns_chk = utils.check_feasibility(prob, s_best.solution)
+            rec["alns_utils_feasible"] = bool(alns_chk["feasible"])
+            rec["alns_utils_objective"] = alns_chk["objective"]
+            rec["alns_utils_Z1"] = alns_chk.get("obj1")
+            rec["alns_utils_Z2"] = alns_chk.get("obj2")
+            rec["alns_utils_Z3"] = alns_chk.get("obj3")
+        else:
+            rec["alns_utils_feasible"] = False
+            rec["alns_utils_objective"] = None
+            rec["alns_utils_Z1"] = None
+            rec["alns_utils_Z2"] = None
+            rec["alns_utils_Z3"] = None
 
         # ---- (옵션) 실전 성능: 실제 제출 알고리즘(4-워커 포트폴리오)의 objective/feasible ----
         if MEASURE_REAL_ALGORITHM:
@@ -307,7 +332,7 @@ def build_report(records, total, started):
     line("ALNS iters/sec", col("alns_iters_per_s"), 1)
     line("ALNS ms/realize", col("alns_ms_per_realize"), 2)
     line("ALNS 개선율 (%)", col("alns_improve_pct"), 2)
-    line("forced (강제배치 수)", col("forced"), 1)
+    line("forced (ALNS best)", col("alns_best_forced"), 1)
 
     # ---- 2) 어디가 병목인가: startup 시간 phase 분해 ----
     tot_pre = sum(v or 0 for v in col("t_phase0_pre"))
@@ -366,7 +391,9 @@ def build_report(records, total, started):
         slow = sorted(nb, key=lambda p: p[1])[:3]
         L.append("- 처리량 최저(=병목) 문제 상위3 (n_blocks, iters/s): "
                  + ", ".join(f"({b}, {ips:.1f})" for b, ips in slow))
-    fz = [(r.get("forced"), r.get("Z1")) for r in ok if r.get("forced") is not None and r.get("Z1") is not None]
+    fz = [(r.get("alns_best_forced"), r.get("alns_utils_Z1"))
+          for r in ok
+          if r.get("alns_best_forced") is not None and r.get("alns_utils_Z1") is not None]
     if fz:
         # 단순 피어슨 상관
         xs = [a for a, _ in fz]; ys = [b for _, b in fz]
@@ -391,9 +418,9 @@ def build_report(records, total, started):
             p=r["prob"], nb=r.get("n_blocks", ""),
             p0=_fmt(r.get("t_phase0_pre"), 3), p1=_fmt(p1t, 3), p2=_fmt(r.get("t_phase2_place_cold"), 3),
             ips=_fmt(r.get("alns_iters_per_s"), 1), msr=_fmt(r.get("alns_ms_per_realize"), 1),
-            imp=_fmt(r.get("alns_improve_pct"), 2), frc=r.get("forced", ""),
-            z1=_fmt(r.get("Z1"), 0), obj=_fmt(r.get("construct_objective"), 0),
-            fe="Y" if r.get("utils_feasible") else "N"))
+            imp=_fmt(r.get("alns_improve_pct"), 2), frc=r.get("alns_best_forced", ""),
+            z1=_fmt(r.get("alns_utils_Z1"), 0), obj=_fmt(r.get("alns_utils_objective"), 0),
+            fe="Y" if r.get("alns_utils_feasible") else "N"))
 
     if errs:
         L.append("\n## 오류 문제")
@@ -435,10 +462,11 @@ def main():
 
     probs = discover_probs()
     done = load_done(jsonl_path)
-    records = list(done.values())
+    stale = {k for k, r in done.items() if not _has_final_alns_metrics(r)}
+    records = [r for k, r in done.items() if k not in stale]
     started = _now()
 
-    log(f"START probs={len(probs)} resume={len(done)} out={OUT_DIR} alns_budget={ALNS_BUDGET_S}s")
+    log(f"START probs={len(probs)} resume={len(done)} stale={len(stale)} out={OUT_DIR} alns_budget={ALNS_BUDGET_S}s")
     if not probs:
         log("경고: 문제 파일을 찾지 못했습니다. PROB_DIRS 절대경로를 확인하세요.")
         return
@@ -449,7 +477,7 @@ def main():
 
     for path in probs:
         key = prob_key(path)
-        if key in done:
+        if key in done and key not in stale:
             continue
         rec = run_one(path)
         fsync_append(jsonl_path, json.dumps(rec, ensure_ascii=False))   # 결과 즉시 디스크 확정
@@ -459,9 +487,9 @@ def main():
             log(f"  {key:16s} ERROR (측정 {rec.get('t_total_measure')}s) — 기록 후 계속")
         else:
             log("  {k:16s} feas={fe} iters/s={ips} ms/real={ms} forced={f} obj={o} ({t}s)".format(
-                k=key, fe=rec.get("utils_feasible"),
+                k=key, fe=rec.get("alns_utils_feasible"),
                 ips=_fmt(rec.get("alns_iters_per_s"), 1), ms=_fmt(rec.get("alns_ms_per_realize"), 1),
-                f=rec.get("forced"), o=_fmt(rec.get("construct_objective"), 0), t=rec.get("t_total_measure")))
+                f=rec.get("alns_best_forced"), o=_fmt(rec.get("alns_utils_objective"), 0), t=rec.get("t_total_measure")))
 
     log(f"DONE {len(records)}/{len(probs)}  보고서: {report_path}")
 

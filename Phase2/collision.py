@@ -48,6 +48,7 @@ class Placement:
 def ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
                             prob_info, pre, cfg, m, G) -> list:
     scored_fast = []
+    debug_stats = getattr(cfg, "_debug_variant_stats", None)
     resident_bbox = {n: gq.world_bbox(pre, n, orient[n], coords[n]) for n in residents}
     for o in range(gq.num_orientations(pre, i)):
         for pos in candidate_positions(i, o, j, residents, coords, orient, pre, cfg):
@@ -57,12 +58,29 @@ def ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
                    prob_info, pre, cfg, m, G)
             scored_fast.append((_score_contact_fast(ctx), pos, o, ctx))
     if not scored_fast:
+        if debug_stats is not None:
+            debug_stats["placement_calls"] = debug_stats.get("placement_calls", 0) + 1
+            debug_stats["zero_feasible_calls"] = debug_stats.get("zero_feasible_calls", 0) + 1
         return []
 
     scored_fast.sort(key=lambda item: item[0], reverse=True)
+    top_k = _contact_exact_top_k(cfg)
+    if debug_stats is not None:
+        debug_stats["placement_calls"] = debug_stats.get("placement_calls", 0) + 1
+        debug_stats["feasible_candidates_total"] = (
+            debug_stats.get("feasible_candidates_total", 0) + len(scored_fast)
+        )
+        debug_stats["exact_candidates_total"] = (
+            debug_stats.get("exact_candidates_total", 0) + min(len(scored_fast), top_k)
+        )
+        debug_stats["max_feasible_candidates"] = max(
+            debug_stats.get("max_feasible_candidates", 0), len(scored_fast)
+        )
+        if len(scored_fast) > top_k:
+            debug_stats["truncated_calls"] = debug_stats.get("truncated_calls", 0) + 1
 
     ranked = []
-    for _, pos, o, ctx in scored_fast[:_contact_exact_top_k(cfg)]:
+    for _, pos, o, ctx in scored_fast[:top_k]:
         ranked.append(Placement(_score_contact_exact(ctx), pos, o))
     ranked.sort(key=lambda cand: cand.score, reverse=True)
     return ranked
