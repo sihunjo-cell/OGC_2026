@@ -21,6 +21,7 @@ import pickle
 import tempfile
 import subprocess
 import pathlib
+from itertools import combinations
 
 from Phase0 import preprocess
 from Phase2 import Phase2Config
@@ -28,6 +29,89 @@ from .config import OuterConfig
 from .alns import alns
 
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
+
+# Selective NFP warm-up limits. Keep them small enough that parent-side warm-up
+# stays cheap while still seeding the most likely early Phase 2 queries.
+_WARM_CLIQUE_PAIR_CAP = 24
+_WARM_GLOBAL_PAIR_CAP = 12
+_WARM_CRANE_PAIR_CAP = 6
+_WARM_NFP_CALL_CAP = 4000
+
+
+def _block_area_priority(pre) -> list:
+    return [max(aa) if aa else 0.0 for aa in pre.area]
+
+
+def _pair_priority(pair, slack: list, area: list):
+    i, j = pair
+    return (min(slack[i], slack[j]),
+            slack[i] + slack[j],
+            -(area[i] + area[j]),
+            -max(area[i], area[j]),
+            i, j)
+
+
+def _candidate_warm_pairs(pre, p1) -> list:
+    """Choose a small set of likely-useful block pairs for NFP warm-up."""
+    area = _block_area_priority(pre)
+    slack = pre.slack
+
+    clique_pairs = set()
+    for cliques in getattr(p1, "cliques", []):
+        for clique in cliques:
+            if len(clique) < 2:
+                continue
+            for i, j in combinations(sorted(clique), 2):
+                clique_pairs.add((i, j))
+
+    ranked = sorted(clique_pairs, key=lambda p: _pair_priority(p, slack, area))
+    chosen = ranked[:_WARM_CLIQUE_PAIR_CAP]
+    chosen_set = set(chosen)
+
+    # Hedge against later ALNS bay changes: add a few globally time-overlapping
+    # pairs from the broader preprocess candidate set.
+    fallback = sorted(pre.CO - chosen_set, key=lambda p: _pair_priority(p, slack, area))
+    chosen.extend(fallback[:_WARM_GLOBAL_PAIR_CAP])
+    return chosen
+
+
+def _warm_pair_nfps(pre, i: int, j: int, warm_crane: bool, call_budget: int) -> int:
+    """Warm canonical-order NFPs for a single pair within a fixed call budget."""
+    used = 0
+    for oi in range(len(pre.poly[i])):
+        for oj in range(len(pre.poly[j])):
+            li = len(pre.poly[i][oi])
+            lj = len(pre.poly[j][oj])
+            kmax = min(li, lj)
+            for k in range(kmax):
+                pre.nfp.same_level(i, j, oi, oj, k)
+                used += 1
+                if used >= call_budget:
+                    return used
+            if warm_crane and li and lj:
+                for ki in range(min(li, lj)):
+                    for kj in range(ki, lj):
+                        pre.nfp.crane(i, j, oi, oj, ki, kj)
+                        used += 1
+                        if used >= call_budget:
+                            return used
+    return used
+
+
+def _selective_warm_nfp(pre, p1) -> dict:
+    """Warm a small, high-value subset of NFPs before worker launch."""
+    pairs = _candidate_warm_pairs(pre, p1)
+    used = 0
+    warmed_pairs = 0
+    for idx, (i, j) in enumerate(pairs):
+        budget_left = _WARM_NFP_CALL_CAP - used
+        if budget_left <= 0:
+            break
+        used += _warm_pair_nfps(pre, i, j,
+                                warm_crane=(idx < _WARM_CRANE_PAIR_CAP),
+                                call_budget=budget_left)
+        warmed_pairs += 1
+    return {"pairs": warmed_pairs, "calls": used, "cache_size": len(pre.nfp)}
 
 
 def default_portfolio() -> list:
@@ -43,13 +127,23 @@ def default_portfolio() -> list:
     ]
 
 
-def _warm_cache(prob_info: dict, pre, cfg: OuterConfig):
+def _warm_cache_legacy(prob_info: dict, pre, cfg: OuterConfig):
     """멤버 0의 초기해를 한 번 실행. 부수효과로 `pre`의 NFP 캐시를 채워 워커용
     피클이 가능하게 한다. 보장된 기준선 하한으로 (objective, solution) 반환,
     실패 시 (inf, None)."""
     from Phase1 import BuildBayAssignment
     from .realize import realize
     p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)   # phase1=None이면 기본값
+    s = realize(p1.bay, prob_info, pre, cfg.phase2)
+    return (s.objective, s.solution) if s.feasible else (float("inf"), None)
+
+
+def _warm_cache(prob_info: dict, pre, cfg: OuterConfig):
+    """Run the seed solution once and use its overlap structure to pre-warm NFPs."""
+    from Phase1 import BuildBayAssignment
+    from .realize import realize
+    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)
+    _selective_warm_nfp(pre, p1)
     s = realize(p1.bay, prob_info, pre, cfg.phase2)
     return (s.objective, s.solution) if s.feasible else (float("inf"), None)
 
@@ -83,7 +177,8 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     warm_obj, warm_sol, pre = float("inf"), None, None
     try:
         pre = preprocess(prob_info)
-        warm_obj, warm_sol = _warm_cache(prob_info, pre, configs[0])
+        # warm_obj, warm_sol = _warm_cache(prob_info, pre, configs[0]) # TODO 
+        warm_obj, warm_sol = _warm_cache_legacy(prob_info, pre, configs[0])
     except Exception:
         pre = None
 
