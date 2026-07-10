@@ -57,7 +57,16 @@ def _premarsh(i, o, pos, residents, coords, orient, exit_, pre) -> float:
 
 # -- 점수 모드 --------------------------------------------------------------
 
-def _score_contact(ctx) -> float:
+def _score_contact_fast(ctx) -> float:
+    (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G) = ctx
+    wK = _s_curve_weight(m, G, cfg.K)
+    corner = _corner(i, o, pos, j, prob_info, pre)
+    temporal = _temporal(i, residents, exit_)
+    return (cfg.w_cn * ((1.0 - wK) * corner)
+            + cfg.w_tp * temporal)
+
+
+def _score_contact_exact(ctx) -> float:
     (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G) = ctx
     wK = _s_curve_weight(m, G, cfg.K)
     contact = _contact(i, o, pos, residents, coords, orient, pre)
@@ -70,9 +79,23 @@ def _score_contact(ctx) -> float:
             + cfg.w_pm * premarsh)
 
 
+def _score_contact(ctx) -> float:
+    return _score_contact_exact(ctx)
+
+
+def _contact_exact_top_k(cfg) -> int:
+    k = getattr(cfg, "contact_exact_top_k", 8)
+    try:
+        k = int(k)
+    except Exception:
+        k = 8
+    return max(1, k)
+
+
 def placement_score(i, o, pos, j, residents, coords, orient, exit_,
                     prob_info, pre, cfg, m, G) -> float:
     """resident가 주어졌을 때 bay j의 (o, pos)에 블록 i를 놓는 것의 점수
     (클수록 좋음). m = 이 bay에 이미 배치된 수, G = bay 전체 블록 수 (S-curve용)."""
     ctx = (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G)
-    return _score_contact(ctx)
+    return _score_contact_exact(ctx)
+

@@ -24,3 +24,12 @@ BETS_REPORT.md
 
 # Editor / misc
 tempCodeRunnerFile.*
+
+# venv
+venv/
+
+# documentation
+docs/ 
+
+# log
+perf_out/
