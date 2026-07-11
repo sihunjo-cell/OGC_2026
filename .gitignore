@@ -30,6 +30,7 @@ venv/
 
 # documentation
 docs/ 
+.agents/
 
 # log
 perf_out/

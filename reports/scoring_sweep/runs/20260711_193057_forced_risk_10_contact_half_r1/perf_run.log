@@ -1,0 +1,25 @@
+[2026-07-11 19:30:57] START probs=20 tasks=20 resume=0 out=C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\scoring_sweep\runs\20260711_193057_forced_risk_10_contact_half_r1
+[2026-07-11 19:30:57]   mode=anytime · anytime horizon=55s(member0 단일 ALNS, 시계=load+preprocess+alns, 진단 제외) · real timelimits=[30.0, 60.0] grace=0.15 · scoring_profile=forced_risk_10_contact_half · 체크포인트=['10', '20', '30', '40', '50', '55', '60', '90', '120', '150', '180']
+[2026-07-11 19:30:57] numba JIT warmup...
+[2026-07-11 19:31:07] warmup done.
+[2026-07-11 19:32:12]   train/prob_1|anytime|h55|sp=forced_risk_10_contact_half feas=True first=9.7s last_imp=28.4s sat=Y iters=19 obj=18248098 (65.096s)
+[2026-07-11 19:33:14]   train/prob_2|anytime|h55|sp=forced_risk_10_contact_half feas=True first=6.2s last_imp=29.8s sat=Y iters=31 obj=2624190 (62.109s)
+[2026-07-11 19:34:16]   train/prob_3|anytime|h55|sp=forced_risk_10_contact_half feas=True first=7.2s last_imp=25.3s sat=Y iters=32 obj=6504954 (62.361s)
+[2026-07-11 19:35:22]   train/prob_4|anytime|h55|sp=forced_risk_10_contact_half feas=True first=11.1s last_imp=48.6s sat=N iters=22 obj=7624035 (65.123s)
+[2026-07-11 19:36:26]   train/prob_5|anytime|h55|sp=forced_risk_10_contact_half feas=True first=8.7s last_imp=49.4s sat=N iters=21 obj=2946081 (63.995s)
+[2026-07-11 19:37:34]   train/prob_6|anytime|h55|sp=forced_risk_10_contact_half feas=True first=11.4s last_imp=26.1s sat=Y iters=12 obj=31574750 (68.058s)
+[2026-07-11 19:38:39]   train/prob_7|anytime|h55|sp=forced_risk_10_contact_half feas=True first=8.4s last_imp=8.4s sat=Y iters=16 obj=7797465 (65.049s)
+[2026-07-11 19:39:43]   train/prob_8|anytime|h55|sp=forced_risk_10_contact_half feas=True first=7.0s last_imp=9.3s sat=Y iters=30 obj=1981660 (63.397s)
+[2026-07-11 19:41:01]   train/prob_9|anytime|h55|sp=forced_risk_10_contact_half feas=True first=26.6s last_imp=51.9s sat=N iters=3 obj=47033148 (77.673s)
+[2026-07-11 19:42:14]   train/prob_10|anytime|h55|sp=forced_risk_10_contact_half feas=True first=17.9s last_imp=45.9s sat=N iters=5 obj=18544103 (73.532s)
+[2026-07-11 19:43:33]   train/prob_11|anytime|h55|sp=forced_risk_10_contact_half feas=True first=19.2s last_imp=32.8s sat=Y iters=4 obj=7009829 (78.768s)
+[2026-07-11 19:44:46]   train/prob_12|anytime|h55|sp=forced_risk_10_contact_half feas=True first=12.6s last_imp=50.4s sat=N iters=10 obj=40929087 (71.915s)
+[2026-07-11 19:45:58]   train/prob_13|anytime|h55|sp=forced_risk_10_contact_half feas=True first=14.8s last_imp=23.6s sat=Y iters=6 obj=26544457 (72.167s)
+[2026-07-11 19:47:32]   train/prob_14|anytime|h55|sp=forced_risk_10_contact_half feas=True first=43.5s last_imp=43.5s sat=Y iters=1 obj=171826367 (94.057s)
+[2026-07-11 19:48:41]   train/prob_15|anytime|h55|sp=forced_risk_10_contact_half feas=True first=13.2s last_imp=46.1s sat=N iters=11 obj=9543298 (68.78s)
+[2026-07-11 19:49:48]   train/prob_16|anytime|h55|sp=forced_risk_10_contact_half feas=True first=8.6s last_imp=33.0s sat=Y iters=16 obj=7132259 (67.033s)
+[2026-07-11 19:51:02]   train/prob_17|anytime|h55|sp=forced_risk_10_contact_half feas=True first=12.5s last_imp=12.5s sat=Y iters=9 obj=16125443 (73.374s)
+[2026-07-11 19:52:20]   train/prob_18|anytime|h55|sp=forced_risk_10_contact_half feas=True first=21.0s last_imp=21.0s sat=Y iters=4 obj=52876147 (77.373s)
+[2026-07-11 19:53:31]   train/prob_19|anytime|h55|sp=forced_risk_10_contact_half feas=True first=13.7s last_imp=54.8s sat=N iters=8 obj=23527142 (71.209s)
+[2026-07-11 19:54:59]   train/prob_20|anytime|h55|sp=forced_risk_10_contact_half feas=True first=28.0s last_imp=28.0s sat=Y iters=2 obj=79588049 (87.693s)
+[2026-07-11 19:54:59] DONE 20/20 report=C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\scoring_sweep\runs\20260711_193057_forced_risk_10_contact_half_r1\perf_report.md

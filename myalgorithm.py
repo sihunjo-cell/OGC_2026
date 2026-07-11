@@ -2,8 +2,11 @@
 
 import time
 
+from Outer.portfolio import default_portfolio, optimize_portfolio
+
 
 ALNS_DEADLINE_S = 53.0  # FIXME
+SCORING_PROFILE = "forced_risk_20"  # FIXME: tune the submission scoring profile after multi-instance sweep. check Phase2/config.py for scoring profile tuning parameters.
 
 
 def algorithm(prob_info, timelimit=60):
@@ -12,11 +15,10 @@ def algorithm(prob_info, timelimit=60):
     deadline = start_time + ALNS_DEADLINE_S  # FIXME
 
     try:
-        from Outer.portfolio import optimize_portfolio
-
         sol = optimize_portfolio(
             prob_info,
             ALNS_DEADLINE_S,
+            configs=default_portfolio(scoring_profile=SCORING_PROFILE),
             n_workers=4,
             deadline=deadline,
             deadline_s=ALNS_DEADLINE_S,
@@ -28,13 +30,12 @@ def algorithm(prob_info, timelimit=60):
 
     from Phase0 import preprocess
     from Outer import alns
-    from Outer.portfolio import default_portfolio
 
     pre = preprocess(prob_info)
     s, _ = alns(
         prob_info,
         pre,
-        cfg=default_portfolio()[0],
+        cfg=default_portfolio(scoring_profile=SCORING_PROFILE)[0],
         deadline=deadline,
         deadline_s=ALNS_DEADLINE_S,
     )

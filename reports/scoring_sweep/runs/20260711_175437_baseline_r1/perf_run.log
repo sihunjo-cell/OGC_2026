@@ -1,0 +1,25 @@
+[2026-07-11 17:54:37] START probs=20 tasks=20 resume=0 out=C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\scoring_sweep\runs\20260711_175437_baseline_r1
+[2026-07-11 17:54:37]   mode=anytime · anytime horizon=55s(member0 단일 ALNS, 시계=load+preprocess+alns, 진단 제외) · real timelimits=[30.0, 60.0] grace=0.15 · scoring_profile=baseline · 체크포인트=['10', '20', '30', '40', '50', '55', '60', '90', '120', '150', '180']
+[2026-07-11 17:54:37] numba JIT warmup...
+[2026-07-11 17:54:48] warmup done.
+[2026-07-11 17:55:54]   train/prob_1|anytime|h55|sp=baseline feas=True first=10.0s last_imp=21.1s sat=Y iters=14 obj=26332394 (65.597s)
+[2026-07-11 17:56:56]   train/prob_2|anytime|h55|sp=baseline feas=True first=5.7s last_imp=25.3s sat=Y iters=30 obj=7717085 (62.394s)
+[2026-07-11 17:58:00]   train/prob_3|anytime|h55|sp=baseline feas=True first=10.7s last_imp=38.9s sat=Y iters=21 obj=25882443 (63.142s)
+[2026-07-11 17:59:06]   train/prob_4|anytime|h55|sp=baseline feas=True first=11.1s last_imp=28.9s sat=Y iters=18 obj=19610638 (66.035s)
+[2026-07-11 18:00:10]   train/prob_5|anytime|h55|sp=baseline feas=True first=7.1s last_imp=46.1s sat=N iters=20 obj=16431762 (64.093s)
+[2026-07-11 18:01:21]   train/prob_6|anytime|h55|sp=baseline feas=True first=9.8s last_imp=45.2s sat=N iters=12 obj=66350772 (70.999s)
+[2026-07-11 18:02:29]   train/prob_7|anytime|h55|sp=baseline feas=True first=9.4s last_imp=53.2s sat=N iters=15 obj=23017954 (67.937s)
+[2026-07-11 18:03:35]   train/prob_8|anytime|h55|sp=baseline feas=True first=9.8s last_imp=40.4s sat=Y iters=22 obj=19433024 (65.386s)
+[2026-07-11 18:04:50]   train/prob_9|anytime|h55|sp=baseline feas=True first=22.0s last_imp=42.1s sat=Y iters=4 obj=115224001 (75.313s)
+[2026-07-11 18:06:02]   train/prob_10|anytime|h55|sp=baseline feas=True first=16.0s last_imp=16.0s sat=Y iters=8 obj=59848944 (71.542s)
+[2026-07-11 18:07:23]   train/prob_11|anytime|h55|sp=baseline feas=True first=20.4s last_imp=33.1s sat=Y iters=4 obj=29423206 (80.787s)
+[2026-07-11 18:08:34]   train/prob_12|anytime|h55|sp=baseline feas=True first=11.9s last_imp=32.0s sat=Y iters=10 obj=67345834 (70.823s)
+[2026-07-11 18:09:44]   train/prob_13|anytime|h55|sp=baseline feas=True first=14.2s last_imp=29.3s sat=Y iters=7 obj=48554550 (70.417s)
+[2026-07-11 18:11:09]   train/prob_14|anytime|h55|sp=baseline feas=True first=33.4s last_imp=48.9s sat=N iters=2 obj=250575497 (84.322s)
+[2026-07-11 18:12:19]   train/prob_15|anytime|h55|sp=baseline feas=True first=11.4s last_imp=36.0s sat=Y iters=11 obj=30993440 (69.382s)
+[2026-07-11 18:13:26]   train/prob_16|anytime|h55|sp=baseline feas=True first=11.0s last_imp=22.1s sat=Y iters=15 obj=34898307 (67.333s)
+[2026-07-11 18:14:36]   train/prob_17|anytime|h55|sp=baseline feas=True first=11.0s last_imp=17.3s sat=Y iters=10 obj=35530049 (70.187s)
+[2026-07-11 18:15:52]   train/prob_18|anytime|h55|sp=baseline feas=True first=17.3s last_imp=45.9s sat=N iters=5 obj=108920170 (75.779s)
+[2026-07-11 18:17:03]   train/prob_19|anytime|h55|sp=baseline feas=True first=12.9s last_imp=27.2s sat=Y iters=8 obj=45283298 (71.044s)
+[2026-07-11 18:18:29]   train/prob_20|anytime|h55|sp=baseline feas=True first=26.3s last_imp=26.3s sat=Y iters=2 obj=127401980 (85.073s)
+[2026-07-11 18:18:29] DONE 20/20 report=C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\scoring_sweep\runs\20260711_175437_baseline_r1\perf_report.md
