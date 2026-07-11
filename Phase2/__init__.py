@@ -5,9 +5,21 @@ PlaceAndCrane가 bay별 배치 -> improve -> 크레인 repair 파이프라인을
 from .config import Phase2Config
 from .contract import Phase1Output, Phase2Result
 from .driver import PlaceAndCrane, build_solution
+from .scoring_profiles import (
+    DEFAULT_SCORING_PROFILE,
+    DEFAULT_SCORING_PROFILE_PORTFOLIO,
+    SCORING_PROFILES,
+    get_scoring_profile,
+    list_scoring_profiles,
+)
 
 __all__ = [
     "Phase2Config",
     "Phase1Output", "Phase2Result",
     "PlaceAndCrane", "build_solution",
+    "DEFAULT_SCORING_PROFILE",
+    "DEFAULT_SCORING_PROFILE_PORTFOLIO",
+    "SCORING_PROFILES",
+    "get_scoring_profile",
+    "list_scoring_profiles",
 ]

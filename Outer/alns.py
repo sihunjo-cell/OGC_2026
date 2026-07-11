@@ -105,6 +105,19 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     stats["iters"] = it
     stats["f_best"] = s_best.objective
     stats["elapsed_s"] = time.perf_counter() - start
+    phase2_info = dict(getattr(s_best, "phase2_info", {}) or {})
+    scoring_metrics = dict(phase2_info.get("scoring_metrics", {}) or {})
+    scoring_metrics.update({
+        "profile": phase2_info.get("scoring_profile"),
+        "objective": s_best.objective,
+        "Z1": s_best.Z1,
+        "forced": getattr(s_best, "forced", None),
+        "iters": it,
+        "iters_per_sec": (it / stats["elapsed_s"]) if stats["elapsed_s"] > 0 else 0.0,
+        "ms_per_realize": (stats["elapsed_s"] / it * 1000.0) if it else None,
+    })
+    phase2_info["scoring_metrics"] = scoring_metrics
+    s_best.phase2_info = phase2_info
     return s_best, stats
 
 
