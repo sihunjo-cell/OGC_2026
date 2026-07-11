@@ -106,9 +106,10 @@ def _run_single(prob_info: dict, wall_budget: float, cfg: OuterConfig, pre=None,
 
 def optimize_portfolio(prob_info: dict, time_limit: float,
                        configs: list = None, n_workers: int = 4,
-                       deadline=None, deadline_s=None) -> dict:
+                       deadline=None, deadline_s=None,
+                       scoring_profile: str | None = None) -> dict:
     use_default = configs is None
-    configs = configs or default_portfolio()
+    configs = configs or default_portfolio(scoring_profile=scoring_profile)
     n = len(configs)
     t0 = time.perf_counter()
 
@@ -194,6 +195,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                 pre_path or "",
                 "" if deadline is None else str(deadline),
                 "" if deadline_s is None else str(deadline_s),
+                scoring_profile or "",
             ]
             p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             procs.append((p, out_path))

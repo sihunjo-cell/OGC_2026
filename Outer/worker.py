@@ -25,7 +25,8 @@ def _load_pre(pre_path, prob_info):
 
 
 def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
-        pre_path: str = None, deadline=None, deadline_s=None) -> None:
+        pre_path: str = None, deadline=None, deadline_s=None,
+        scoring_profile: str | None = None) -> None:
     t0 = time.perf_counter()
     here = pathlib.Path(__file__).resolve().parent.parent
     if str(here) not in sys.path:
@@ -39,7 +40,7 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
         with open(prob_path, "r", encoding="utf-8") as f:
             prob_info = json.load(f)
 
-        cfg = default_portfolio()[cfg_index]
+        cfg = default_portfolio(scoring_profile=scoring_profile)[cfg_index]
         pre = _load_pre(pre_path, prob_info)
         alns_budget = None
         if deadline is None:
@@ -72,4 +73,14 @@ if __name__ == "__main__":
     _pre = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
     _deadline = float(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6] else None
     _deadline_s = float(sys.argv[7]) if len(sys.argv) > 7 and sys.argv[7] else None
-    run(sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), sys.argv[4], _pre, _deadline, _deadline_s)
+    _scoring_profile = sys.argv[8] if len(sys.argv) > 8 and sys.argv[8] else None
+    run(
+        sys.argv[1],
+        int(sys.argv[2]),
+        float(sys.argv[3]),
+        sys.argv[4],
+        _pre,
+        _deadline,
+        _deadline_s,
+        _scoring_profile,
+    )
