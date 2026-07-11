@@ -17,13 +17,19 @@ from .repair import repair
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
-         max_iters=None, deadline=None, deadline_s=None):
-    """Run ALNS until budget, deadline, or max_iters is reached."""
+         max_iters=None, deadline=None, deadline_s=None, t0=None):
+    """Run ALNS until budget, deadline, or max_iters is reached.
+
+    t0: anytime 계측의 시각 원점(perf_counter 값). 미지정 시 alns 시작 시각.
+    stats["best_events"]/["iter_t"]는 진단용 추가 데이터로, 호출자가 무시하면
+    기존 동작과 완전히 동일하다(worker/portfolio는 stats를 버림)."""
     cfg = cfg or OuterConfig()
     rng = Random(cfg.seed)
 
     p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)
     start = time.perf_counter()
+    if t0 is None:
+        t0 = start
     budget_deadline = None if budget_s is None else (start + budget_s)
 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
@@ -43,6 +49,10 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "elapsed_s": 0.0,
         "deadline_s": deadline_s,
         "stopped_by_deadline": False,
+        # anytime 곡선용: [t0 기준 상대시각(s), 그 시점의 incumbent objective].
+        # 첫 원소 = 초기 realize 완료 시점(= 최초로 반환 가능한 인증해).
+        "best_events": [[time.perf_counter() - t0, s.objective]],
+        "iter_t": [],   # 반복 완료 시각(t0 기준). diff -> 반복 1회 비용 분포.
     }
 
     it = 0
@@ -80,8 +90,10 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         if s2.objective < s_best.objective:
             s_best = s2
             stats["improved"] += 1
+            stats["best_events"].append([time.perf_counter() - t0, s2.objective])
 
         stats["traj"].append(s2.objective)
+        stats["iter_t"].append(time.perf_counter() - t0)
         T *= cfg.c
         it += 1
         if it % cfg.seg == 0:
