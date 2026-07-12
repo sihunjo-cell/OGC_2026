@@ -141,24 +141,37 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         _commit(i, j, pos, o, placed_here)
         forced_cons.add(i)
 
-    # ---- 배치, bay 하나씩 ----------------------------------------------
-    for j in range(pre.n_bays):
-        G = len(bay_blocks[j])
-        placed_here: list = []
-        cliques = p1_out.cliques[j] if j < len(p1_out.cliques) else []
-        cliques = sorted(cliques, key=lambda C: min(entry[i] for i in C)) if cliques else []
+    # ---- 배치 --------------------------------------------------------------
+    if getattr(cfg, "construction_mode", "clique") == "dispatch":
+        # 요인 2 (플레이북 §3.4): 이벤트 구동 ATC admission. lazy import로
+        # 기본 경로에서 numpy/shapely 마스크 코드가 로드되지 않게 한다.
+        from .dispatch import dispatch_construct
+        d_coords, d_orient, d_entry, d_exit, d_forced = dispatch_construct(
+            prob_info, p1_out, pre, cfg, deadline=deadline)
+        coords.update(d_coords)
+        orient.update(d_orient)
+        entry[:] = d_entry
+        exit_[:] = d_exit
+        forced_cons |= d_forced
+    else:
+        # ---- 기존 경로: bay 하나씩, clique/극대시점 순서 (byte-identical) ----
+        for j in range(pre.n_bays):
+            G = len(bay_blocks[j])
+            placed_here: list = []
+            cliques = p1_out.cliques[j] if j < len(p1_out.cliques) else []
+            cliques = sorted(cliques, key=lambda C: min(entry[i] for i in C)) if cliques else []
 
-        for C in cliques:
-            SB, TT = resident_sets(C, entry, exit_)
-            for t in TT:
-                unplaced = [i for i in SB[t] if i not in coords]
-                for i in ordering.static_order(unplaced, pre, cfg):
-                    if i not in coords:
-                        _place_one(i, j, placed_here, G)
-        # clique에 안 잡힌 bay 블록 (방어적; singleton으로 전부 커버돼야 정상)
-        for i in bay_blocks[j]:
-            if i not in coords:
-                _place_one(i, j, placed_here, G)
+            for C in cliques:
+                SB, TT = resident_sets(C, entry, exit_)
+                for t in TT:
+                    unplaced = [i for i in SB[t] if i not in coords]
+                    for i in ordering.static_order(unplaced, pre, cfg):
+                        if i not in coords:
+                            _place_one(i, j, placed_here, G)
+            # clique에 안 잡힌 bay 블록 (방어적; singleton으로 전부 커버돼야 정상)
+            for i in bay_blocks[j]:
+                if i not in coords:
+                    _place_one(i, j, placed_here, G)
 
     # ---- 2.6 개선 (기본 off) --------------------------------------
     ictx = ImproveCtx(pre=pre, cfg=cfg, prob_info=prob_info, bay=bay,

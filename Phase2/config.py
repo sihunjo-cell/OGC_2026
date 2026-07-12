@@ -46,6 +46,15 @@ class Phase2Config:
     # Repair
     max_repair_passes: int = 2
 
+    # 구성 경로 (요인 2, 플레이북 §3.4): "clique" = 기존(기본, byte-identical)
+    # | "dispatch" = 이벤트 구동 ATC admission + 라스터 스캔.
+    construction_mode: str = "clique"
+    atc_kappa: float = 2.0          # ATC 여유 감쇠 (로터리 값: 0.5/1/2/4)
+    atc_alpha: float = 0.0          # 0 = 순수 ATC (면적 항 끔)
+    dispatch_cand_cap: int = 12     # (bay, orient)당 정확 게이트에 넘길 셀 수
+    dispatch_cand_cap_hi: int = 48  # 큐가 밀리면 확대 ("12셀 절벽" 수정)
+    dispatch_queue_hi: int = 20     # 확대 발동 큐 길이
+
     # Forced-fallback rescue: force_place(빈 bay) 전에 부분점유 슬롯 재시도.
     # 둘 다 False면 이전 동작 바이트 동일. budget은 디코드당 재시도 시도 상한.
     force_retry_construction: bool = False       # 큰 문제 비용 커서 기본 OFF
