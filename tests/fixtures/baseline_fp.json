@@ -1,0 +1,12 @@
+{
+ "prob_1": {
+  "fingerprint": "41a71d9492bdf7a5",
+  "op_count": 200,
+  "objective": 28117309.0
+ },
+ "prob_5": {
+  "fingerprint": "8f0862c0df7a7822",
+  "op_count": 300,
+  "objective": 23791648.0
+ }
+}
