@@ -36,7 +36,26 @@ def _phase2_cfg(scoring_profile: str | None = None, **kwargs) -> Phase2Config:
     return Phase2Config(**kwargs)
 
 
+def dispatch_portfolio(scoring_profile: str | None = None) -> list:
+    """디스패처 포트폴리오 (A/B 옵트인: OGC_PORTFOLIO=dispatch).
+    멤버0 = dispatch(부모 warm 빌드가 이 cfg를 씀 -> 빠른 첫 인증해 + floor),
+    멤버1 = 레거시 앵커(기존 default 멤버0과 동일 -> 무회귀 basin),
+    멤버2/3 = ATC kappa 로터리 (플레이북 §6: kappa in {0.5, 1, 2, 4})."""
+    return [
+        OuterConfig(xi=0.4, seed=0, phase2=_phase2_cfg(
+            scoring_profile, construction_mode="dispatch", atc_kappa=2.0)),
+        OuterConfig(xi=0.4, seed=0, phase2=_phase2_cfg(
+            scoring_profile, improve_mode="off", forcing_mode="empty_bay")),
+        OuterConfig(xi=0.3, seed=1, phase2=_phase2_cfg(
+            scoring_profile, construction_mode="dispatch", atc_kappa=0.5)),
+        OuterConfig(xi=0.5, seed=5, phase2=_phase2_cfg(
+            scoring_profile, construction_mode="dispatch", atc_kappa=4.0)),
+    ]
+
+
 def default_portfolio(scoring_profile: str | None = None) -> list:
+    if os.environ.get("OGC_PORTFOLIO", "").strip().lower() == "dispatch":
+        return dispatch_portfolio(scoring_profile)
     return [
         OuterConfig(
             xi=0.4,
