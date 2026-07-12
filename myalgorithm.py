@@ -6,14 +6,6 @@ import time
 from Outer.portfolio import default_portfolio, optimize_portfolio
 
 
-# baseline: fr20는 rescue 위 2x2 ablation 통과 후 재승격(ISSUE4 §0-2). env로 실험.
-DEFAULT_SCORING_PROFILE = "baseline"
-
-
-def _resolve_scoring_profile():
-    return os.environ.get("OGC_SCORING_PROFILE", DEFAULT_SCORING_PROFILE)
-
-
 def _alns_reserve(timelimit):
     """timelimit - budget. 부모가 워커를 deadline + wrapup(8~25s)에 강제 종료하므로
     reserve > wrapup 이면 반환 < timelimit 보장(전 T에서 reserve - wrapup >= 4)."""
@@ -35,7 +27,6 @@ def _resolve_alns_deadline_s(timelimit):
 
 def algorithm(prob_info, timelimit=60):
     """Submission entry point. deadline을 timelimit에서 유도(초과 시 -1점, §3.2)."""
-    scoring_profile = _resolve_scoring_profile()
     alns_deadline_s = _resolve_alns_deadline_s(timelimit)
     start_time = time.perf_counter()
     deadline = start_time + alns_deadline_s
@@ -47,7 +38,6 @@ def algorithm(prob_info, timelimit=60):
             n_workers=4,
             deadline=deadline,
             deadline_s=alns_deadline_s,
-            scoring_profile=scoring_profile,
         )
         if sol is not None:
             return sol
@@ -61,7 +51,7 @@ def algorithm(prob_info, timelimit=60):
     s, _ = alns(
         prob_info,
         pre,
-        cfg=default_portfolio(scoring_profile=scoring_profile)[0],
+        cfg=default_portfolio()[0],
         deadline=deadline,
         deadline_s=alns_deadline_s,
     )

@@ -1,11 +1,8 @@
-"""Phase 2 collision checks and placement candidate ranking."""
+"""Phase 2 정확 충돌 게이트 (dispatch 안전망 repair가 쓰는 쌍별 기하 판정)."""
 
 from __future__ import annotations
 
 from . import geometry_query as gq
-from .candidates import candidate_positions
-from .scoring import (_contact_exact_top_k, _score_contact_exact_with_proxy,
-                      _score_contact_fast)
 
 
 def collision_oracle(i, o, pos_i, n, on, pos_n, pre, bbox_i=None, bbox_n=None) -> bool:
@@ -34,69 +31,3 @@ def _collision_free(i, o, pos, residents, coords, orient, pre, resident_bbox=Non
         if not collision_oracle(i, o, pos, n, orient[n], coords[n], pre, bbox_i, bbox_n):
             return False
     return True
-
-
-class Placement:
-    __slots__ = ("score", "pos", "o", "forced_risk")
-
-    def __init__(self, score, pos, o, forced_risk=0.0):
-        self.score = score
-        self.pos = pos
-        self.o = o
-        self.forced_risk = forced_risk
-
-
-def ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
-                            prob_info, pre, cfg, m, G) -> list:
-    scored_fast = []
-    debug_stats = getattr(cfg, "_debug_variant_stats", None)
-    resident_bbox = {n: gq.world_bbox(pre, n, orient[n], coords[n]) for n in residents}
-    for o in range(gq.num_orientations(pre, i)):
-        for pos in candidate_positions(i, o, j, residents, coords, orient, pre, cfg):
-            if debug_stats is not None:
-                debug_stats["candidate_evaluations"] = debug_stats.get("candidate_evaluations", 0) + 1
-            if not _collision_free(i, o, pos, residents, coords, orient, pre, resident_bbox):
-                continue
-            ctx = (i, o, pos, j, residents, coords, orient, exit_,
-                   prob_info, pre, cfg, m, G)
-            scored_fast.append((_score_contact_fast(ctx), pos, o, ctx))
-    if not scored_fast:
-        if debug_stats is not None:
-            debug_stats["placement_calls"] = debug_stats.get("placement_calls", 0) + 1
-            debug_stats["zero_feasible_calls"] = debug_stats.get("zero_feasible_calls", 0) + 1
-        return []
-
-    scored_fast.sort(key=lambda item: item[0], reverse=True)
-    top_k = _contact_exact_top_k(cfg)
-    if debug_stats is not None:
-        debug_stats["placement_calls"] = debug_stats.get("placement_calls", 0) + 1
-        debug_stats["feasible_candidates_total"] = (
-            debug_stats.get("feasible_candidates_total", 0) + len(scored_fast)
-        )
-        debug_stats["exact_candidates_total"] = (
-            debug_stats.get("exact_candidates_total", 0) + min(len(scored_fast), top_k)
-        )
-        debug_stats["max_feasible_candidates"] = max(
-            debug_stats.get("max_feasible_candidates", 0), len(scored_fast)
-        )
-        if len(scored_fast) > top_k:
-            debug_stats["truncated_calls"] = debug_stats.get("truncated_calls", 0) + 1
-
-    ranked = []
-    for _, pos, o, ctx in scored_fast[:top_k]:
-        score, forced_risk = _score_contact_exact_with_proxy(ctx)
-        ranked.append(Placement(score, pos, o, forced_risk=forced_risk))
-    ranked.sort(key=lambda cand: cand.score, reverse=True)
-    if debug_stats is not None and ranked:
-        debug_stats["selected_placements"] = debug_stats.get("selected_placements", 0) + 1
-        debug_stats["selected_forced_risk_total"] = (
-            debug_stats.get("selected_forced_risk_total", 0.0) + ranked[0].forced_risk
-        )
-    return ranked
-
-
-def place_block(i, j, residents, coords, orient, entry, exit_,
-                prob_info, pre, cfg, m, G) -> "Placement | None":
-    ranked = ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
-                                     prob_info, pre, cfg, m, G)
-    return ranked[0] if ranked else None

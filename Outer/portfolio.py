@@ -22,71 +22,15 @@ from .config import OuterConfig
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
-def _portfolio_scoring_profile(scoring_profile: str | None = None) -> str | None:
-    if scoring_profile is not None:
-        return scoring_profile
-    value = os.environ.get("OGC_SCORING_PROFILE", "").strip()
-    return value or None
-
-
-def _phase2_cfg(scoring_profile: str | None = None, **kwargs) -> Phase2Config:
-    profile = _portfolio_scoring_profile(scoring_profile)
-    if profile is not None:
-        kwargs["scoring_profile"] = profile
-    return Phase2Config(**kwargs)
-
-
-def dispatch_portfolio(scoring_profile: str | None = None) -> list:
-    """디스패처 포트폴리오 (A/B 옵트인: OGC_PORTFOLIO=dispatch).
-    멤버0 = dispatch(부모 warm 빌드가 이 cfg를 씀 -> 빠른 첫 인증해 + floor),
-    멤버1 = 레거시 앵커(기존 default 멤버0과 동일 -> 무회귀 basin),
-    멤버2/3 = ATC kappa 로터리 (플레이북 §6: kappa in {0.5, 1, 2, 4})."""
+def default_portfolio() -> list:
+    """이벤트 구동 dispatch 포트폴리오 (A/B로 전 인스턴스 최고 성능 확정).
+    멤버는 ATC κ 다양성(0.5/1/2/4, 플레이북 §6) + 시드·파괴율 다양성으로만 분기한다.
+    부모 warm 빌드가 configs[0]을 써 빠른 첫 인증해 + floor를 만든다."""
     return [
-        OuterConfig(xi=0.4, seed=0, phase2=_phase2_cfg(
-            scoring_profile, construction_mode="dispatch", atc_kappa=2.0)),
-        OuterConfig(xi=0.4, seed=0, phase2=_phase2_cfg(
-            scoring_profile, improve_mode="off", forcing_mode="empty_bay")),
-        OuterConfig(xi=0.3, seed=1, phase2=_phase2_cfg(
-            scoring_profile, construction_mode="dispatch", atc_kappa=0.5)),
-        OuterConfig(xi=0.5, seed=5, phase2=_phase2_cfg(
-            scoring_profile, construction_mode="dispatch", atc_kappa=4.0)),
-    ]
-
-
-def default_portfolio(scoring_profile: str | None = None) -> list:
-    if os.environ.get("OGC_PORTFOLIO", "").strip().lower() == "dispatch":
-        return dispatch_portfolio(scoring_profile)
-    return [
-        OuterConfig(
-            xi=0.4,
-            seed=0,
-            phase2=_phase2_cfg(scoring_profile, improve_mode="off", forcing_mode="empty_bay"),
-        ),
-        OuterConfig(
-            xi=0.3,
-            seed=1,
-            phase2=_phase2_cfg(scoring_profile, improve_mode="jostle_2exchange", forcing_mode="empty_bay"),
-        ),
-        OuterConfig(
-            xi=0.3,
-            seed=4,
-            phase2=_phase2_cfg(
-                scoring_profile,
-                improve_mode="jostle_2exchange",
-                forcing_mode="empty_bay",
-                order_mode="mst",
-            ),
-        ),
-        OuterConfig(
-            xi=0.5,
-            seed=5,
-            phase2=_phase2_cfg(
-                scoring_profile,
-                improve_mode="off",
-                forcing_mode="earliest_slot",
-                order_mode="mst",
-            ),
-        ),
+        OuterConfig(xi=0.4, seed=0, phase2=Phase2Config(atc_kappa=2.0)),
+        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=0.5)),
+        OuterConfig(xi=0.3, seed=4, phase2=Phase2Config(atc_kappa=1.0)),
+        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=4.0)),
     ]
 
 
@@ -125,10 +69,9 @@ def _run_single(prob_info: dict, wall_budget: float, cfg: OuterConfig, pre=None,
 
 def optimize_portfolio(prob_info: dict, time_limit: float,
                        configs: list = None, n_workers: int = 4,
-                       deadline=None, deadline_s=None,
-                       scoring_profile: str | None = None) -> dict:
+                       deadline=None, deadline_s=None) -> dict:
     use_default = configs is None
-    configs = configs or default_portfolio(scoring_profile=scoring_profile)
+    configs = configs or default_portfolio()
     n = len(configs)
     t0 = time.perf_counter()
 
@@ -214,7 +157,6 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                 pre_path or "",
                 "" if deadline is None else str(deadline),
                 "" if deadline_s is None else str(deadline_s),
-                scoring_profile or "",
             ]
             p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             procs.append((p, out_path))
