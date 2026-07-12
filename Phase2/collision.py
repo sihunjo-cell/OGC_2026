@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from . import geometry_query as gq
 from .candidates import candidate_positions
-from .scoring import (_contact_exact_top_k, _score_contact_exact,
+from .scoring import (_contact_exact_top_k, _score_contact_exact_with_proxy,
                       _score_contact_fast)
 
 
@@ -37,12 +37,13 @@ def _collision_free(i, o, pos, residents, coords, orient, pre, resident_bbox=Non
 
 
 class Placement:
-    __slots__ = ("score", "pos", "o")
+    __slots__ = ("score", "pos", "o", "forced_risk")
 
-    def __init__(self, score, pos, o):
+    def __init__(self, score, pos, o, forced_risk=0.0):
         self.score = score
         self.pos = pos
         self.o = o
+        self.forced_risk = forced_risk
 
 
 def ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
@@ -52,6 +53,8 @@ def ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
     resident_bbox = {n: gq.world_bbox(pre, n, orient[n], coords[n]) for n in residents}
     for o in range(gq.num_orientations(pre, i)):
         for pos in candidate_positions(i, o, j, residents, coords, orient, pre, cfg):
+            if debug_stats is not None:
+                debug_stats["candidate_evaluations"] = debug_stats.get("candidate_evaluations", 0) + 1
             if not _collision_free(i, o, pos, residents, coords, orient, pre, resident_bbox):
                 continue
             ctx = (i, o, pos, j, residents, coords, orient, exit_,
@@ -81,8 +84,14 @@ def ranked_block_candidates(i, j, residents, coords, orient, entry, exit_,
 
     ranked = []
     for _, pos, o, ctx in scored_fast[:top_k]:
-        ranked.append(Placement(_score_contact_exact(ctx), pos, o))
+        score, forced_risk = _score_contact_exact_with_proxy(ctx)
+        ranked.append(Placement(score, pos, o, forced_risk=forced_risk))
     ranked.sort(key=lambda cand: cand.score, reverse=True)
+    if debug_stats is not None and ranked:
+        debug_stats["selected_placements"] = debug_stats.get("selected_placements", 0) + 1
+        debug_stats["selected_forced_risk_total"] = (
+            debug_stats.get("selected_forced_risk_total", 0.0) + ranked[0].forced_risk
+        )
     return ranked
 
 

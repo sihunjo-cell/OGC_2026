@@ -23,6 +23,7 @@ class Solution:
     solution: dict            # utils/제출용 {"operations": {...}}
     feasible: bool = True
     forced: int = 0           # 뒤 윈도로 밀린 블록 수(Z1 원인, 진단용)
+    phase2_info: dict = field(default_factory=dict)
 
     def key(self):
         return (tuple(self.bay),

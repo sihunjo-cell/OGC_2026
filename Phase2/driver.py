@@ -46,6 +46,9 @@ def build_solution(coords, orient, entry, exit_, bay, block_ids) -> dict:
 
 def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Phase2Result:
     cfg = cfg or Phase2Config()
+    cfg.resolve_scoring_profile()
+    if getattr(cfg, "_debug_variant_stats", None) is None:
+        cfg._debug_variant_stats = {}
     blocks = prob_info["blocks"]
     n = len(blocks)
     P = [b["processing_time"] for b in blocks]
@@ -175,6 +178,38 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Pha
         feasible, conflicts, stage = crane_feasibility(prob_info, sol)
 
     Z1 = sum(max(0, exit_[i] - D[i]) for i in range(n)) if feasible else None
+    scoring_stats = dict(getattr(cfg, "_debug_variant_stats", {}))
+    for key in (
+        "candidate_evaluations",
+        "feasible_candidates_total",
+        "exact_candidates_total",
+        "forced_risk_evaluations",
+        "forced_risk_fast_evaluations",
+        "forced_risk_exact_evaluations",
+        "forced_risk_resident_checks",
+        "forced_risk_crane_checks",
+        "selected_placements",
+        "selected_forced_risk_total",
+    ):
+        scoring_stats.setdefault(key, 0)
+    selected = scoring_stats.get("selected_placements", 0)
+    scoring_stats["selected_forced_risk_avg"] = (
+        scoring_stats.get("selected_forced_risk_total", 0.0) / selected
+        if selected else None
+    )
+    scoring_stats["candidate_evals"] = scoring_stats.get("candidate_evaluations", 0)
+    scoring_stats["forced_risk_evals"] = scoring_stats.get("forced_risk_evaluations", 0)
+    scoring_stats["avg_selected_forced_risk"] = scoring_stats.get("selected_forced_risk_avg")
+    scoring_stats.update({
+        "profile": cfg.scoring_profile,
+        "objective": None,
+        "Z1": Z1,
+        "forced": len(forced),
+        "realize_ms": None,
+        "iters": None,
+        "iters_per_sec": None,
+        "ms_per_realize": None,
+    })
 
     return Phase2Result(
         status="SOLUTION",
@@ -184,6 +219,13 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Pha
         entry=entry,
         exit_=exit_,
         Z1=Z1,
-        info={"feasible": feasible, "stage": stage, "unresolved": conflicts,
-              "forced": sorted(forced)},
+        info={
+            "feasible": feasible,
+            "stage": stage,
+            "unresolved": conflicts,
+            "forced": sorted(forced),
+            "scoring_profile": cfg.scoring_profile,
+            "scoring_params": cfg.scoring_params(),
+            "scoring_metrics": scoring_stats,
+        },
     )

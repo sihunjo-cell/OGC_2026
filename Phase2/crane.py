@@ -35,6 +35,28 @@ def crane_obstructed(i, o, pos, blockers, coords, orient, pre) -> bool:
     return False
 
 
+def crane_blocks_resident(candidate_i, candidate_o, candidate_pos,
+                          resident_n, coords, orient, pre) -> bool:
+    """Return True when placing `candidate_i` would obstruct resident `resident_n`.
+
+    This is the resident-perspective counterpart of `crane_obstructed(...)`,
+    used as a cheap proxy during candidate scoring.
+    """
+    rx, ry = coords[resident_n]
+    on = orient[resident_n]
+    dx = rx - candidate_pos[0]
+    dy = ry - candidate_pos[1]
+    Kn = gq.num_layers(pre, resident_n, on)
+    Ki = gq.num_layers(pre, candidate_i, candidate_o)
+    for k in range(Kn):
+        for j2 in range(k, Ki):
+            rings = gq.relative_nfp_crane(pre, moving=resident_n, fixed=candidate_i,
+                                          o_m=on, o_f=candidate_o, k_m=k, k_f=j2)
+            if gq.point_in_rings(dx, dy, rings):
+                return True
+    return False
+
+
 # -- 최종 인증 (utils) ----------------------------------------------
 
 def _load_utils():

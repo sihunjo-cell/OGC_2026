@@ -1,25 +1,17 @@
-"""Phase2.scoring -- 2.3 배치 점수 (클수록 좋음). 항목:
-  contact  = resident와 공유하는 경계 길이 (조밀함).
-  corner   = bay 중심에서의 거리 (블록을 벽쪽으로 밀어냄).
-  temporal = -sum |EXIT_i - EXIT_n| over residents (비슷한 exit 선호 -> LIFO).
-  premarsh = -sum, 늦게 나가는 resident와의 bbox 겹침 면적 (vertical-sweep 근사).
-  wK       = S-curve 혼합. 초반엔 contact, 후반엔 corner 강조.
-w_* 가중치와 S-curve로 가중합."""
+"""Phase 2 placement scoring."""
 
 from __future__ import annotations
 
 import math
 
 from . import geometry_query as gq
+from .crane import crane_blocks_resident
 
 
 def _s_curve_weight(m: int, G: int, K: float) -> float:
-    """wK = 1 - 1/(1 + exp((2m - G)/(2K))). m = bay에 이미 배치된 블록 수,
-    G = bay에 배정된 전체 블록 수."""
     if K <= 0:
         return 1.0
     z = (2.0 * m - G) / (2.0 * K)
-    # 극단적인 z에서 exp 오버플로 막으려 clamp
     if z > 60:
         return 1.0
     if z < -60:
@@ -55,28 +47,118 @@ def _premarsh(i, o, pos, residents, coords, orient, exit_, pre) -> float:
     return -tot
 
 
-# -- 점수 모드 --------------------------------------------------------------
+def _forced_risk_enabled(cfg) -> bool:
+    return getattr(cfg, "forced_risk_weight", 0.0) > 0.0 and getattr(cfg, "forced_risk_mode", "off") != "off"
+
+
+def _forced_risk_mode(cfg) -> str:
+    return getattr(cfg, "forced_risk_mode", "off")
+
+
+def _forced_risk_max_residents(cfg) -> int:
+    try:
+        return max(1, int(getattr(cfg, "forced_risk_max_residents", 6)))
+    except Exception:
+        return 6
+
+
+def _bbox_area(bb) -> float:
+    return max(0.0, (bb[1] - bb[0]) * (bb[3] - bb[2]))
+
+
+def _risk_urgency(exit_i: float, exit_n: float) -> float:
+    gap = max(0.0, float(exit_i - exit_n))
+    # FIXME: forced-risk urgency decay should be tuned with scoring profile sweep.
+    return 1.0 / (1.0 + gap)
+
+
+def _forced_risk_proxy(ctx, stage: str) -> float:
+    (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G) = ctx
+    if not _forced_risk_enabled(cfg):
+        return 0.0
+
+    debug_stats = getattr(cfg, "_debug_variant_stats", None)
+    mode = _forced_risk_mode(cfg)
+    if debug_stats is not None:
+        key = "forced_risk_fast_evaluations" if stage == "fast" else "forced_risk_exact_evaluations"
+        debug_stats[key] = debug_stats.get(key, 0) + 1
+        debug_stats["forced_risk_evaluations"] = debug_stats.get("forced_risk_evaluations", 0) + 1
+
+    earlier = [n for n in residents if exit_[n] < exit_[i]]
+    if not earlier:
+        return 0.0
+
+    earlier.sort(key=lambda n: (exit_[i] - exit_[n], exit_[n], n))
+    earlier = earlier[:_forced_risk_max_residents(cfg)]
+
+    bb_i = gq.world_bbox(pre, i, o, pos)
+    area_i = max(1.0, _bbox_area(bb_i))
+    risk = 0.0
+    crane_checks = 0
+
+    for n in earlier:
+        bb_n = gq.world_bbox(pre, n, orient[n], coords[n])
+        overlap = gq.bbox_overlap_area(bb_i, bb_n)
+        overlap_norm = overlap / max(1.0, min(area_i, _bbox_area(bb_n)))
+        term = overlap_norm
+        if stage == "exact" and mode == "overlap_crane":
+            crane_checks += 1
+            if crane_blocks_resident(i, o, pos, n, coords, orient, pre):
+                # FIXME: crane-blocking addend inside forced-risk scoring is experimental.
+                term += 1.0
+        risk += _risk_urgency(exit_[i], exit_[n]) * term
+
+    if debug_stats is not None:
+        debug_stats["forced_risk_resident_checks"] = (
+            debug_stats.get("forced_risk_resident_checks", 0) + len(earlier)
+        )
+        if stage == "exact":
+            debug_stats["forced_risk_crane_checks"] = (
+                debug_stats.get("forced_risk_crane_checks", 0) + crane_checks
+            )
+    return risk
+
+
+def _effective_weight_terms(cfg) -> tuple[float, float, float, float]:
+    # FIXME: base contact/corner/temporal/premarsh weights should be tuned with scoring profile sweep.
+    w_ct_eff = getattr(cfg, "w_ct", 1.0) * getattr(cfg, "contact_weight_scale", 1.0)
+    w_cn_eff = getattr(cfg, "w_cn", 0.01) * getattr(cfg, "corner_weight_scale", 1.0)
+    w_tp_eff = getattr(cfg, "w_tp", 0.1) * getattr(cfg, "temporal_weight_scale", 1.0)
+    w_pm_eff = getattr(cfg, "w_pm", 1.0) * getattr(cfg, "premarsh_weight_scale", 1.0)
+    return w_ct_eff, w_cn_eff, w_tp_eff, w_pm_eff
+
 
 def _score_contact_fast(ctx) -> float:
     (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G) = ctx
     wK = _s_curve_weight(m, G, cfg.K)
+    _, w_cn_eff, w_tp_eff, _ = _effective_weight_terms(cfg)
     corner = _corner(i, o, pos, j, prob_info, pre)
     temporal = _temporal(i, residents, exit_)
-    return (cfg.w_cn * ((1.0 - wK) * corner)
-            + cfg.w_tp * temporal)
+    forced_risk = _forced_risk_proxy(ctx, stage="fast")
+    return (w_cn_eff * ((1.0 - wK) * corner)
+            + w_tp_eff * temporal
+            - cfg.forced_risk_weight * forced_risk)
 
 
-def _score_contact_exact(ctx) -> float:
+def _score_contact_exact_with_proxy(ctx) -> tuple[float, float]:
     (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G) = ctx
     wK = _s_curve_weight(m, G, cfg.K)
+    w_ct_eff, w_cn_eff, w_tp_eff, w_pm_eff = _effective_weight_terms(cfg)
     contact = _contact(i, o, pos, residents, coords, orient, pre)
     corner = _corner(i, o, pos, j, prob_info, pre)
     temporal = _temporal(i, residents, exit_)
     premarsh = _premarsh(i, o, pos, residents, coords, orient, exit_, pre)
-    return (cfg.w_ct * (wK * contact)
-            + cfg.w_cn * ((1.0 - wK) * corner)
-            + cfg.w_tp * temporal
-            + cfg.w_pm * premarsh)
+    forced_risk = _forced_risk_proxy(ctx, stage="exact")
+    score = (w_ct_eff * (wK * contact)
+             + w_cn_eff * ((1.0 - wK) * corner)
+             + w_tp_eff * temporal
+             + w_pm_eff * premarsh
+             - cfg.forced_risk_weight * forced_risk)
+    return score, forced_risk
+
+
+def _score_contact_exact(ctx) -> float:
+    return _score_contact_exact_with_proxy(ctx)[0]
 
 
 def _score_contact(ctx) -> float:
@@ -94,8 +176,5 @@ def _contact_exact_top_k(cfg) -> int:
 
 def placement_score(i, o, pos, j, residents, coords, orient, exit_,
                     prob_info, pre, cfg, m, G) -> float:
-    """resident가 주어졌을 때 bay j의 (o, pos)에 블록 i를 놓는 것의 점수
-    (클수록 좋음). m = 이 bay에 이미 배치된 수, G = bay 전체 블록 수 (S-curve용)."""
     ctx = (i, o, pos, j, residents, coords, orient, exit_, prob_info, pre, cfg, m, G)
     return _score_contact_exact(ctx)
-

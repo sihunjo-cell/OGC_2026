@@ -22,22 +22,37 @@ from .config import OuterConfig
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
-def default_portfolio() -> list:
+def _portfolio_scoring_profile(scoring_profile: str | None = None) -> str | None:
+    if scoring_profile is not None:
+        return scoring_profile
+    value = os.environ.get("OGC_SCORING_PROFILE", "").strip()
+    return value or None
+
+
+def _phase2_cfg(scoring_profile: str | None = None, **kwargs) -> Phase2Config:
+    profile = _portfolio_scoring_profile(scoring_profile)
+    if profile is not None:
+        kwargs["scoring_profile"] = profile
+    return Phase2Config(**kwargs)
+
+
+def default_portfolio(scoring_profile: str | None = None) -> list:
     return [
         OuterConfig(
             xi=0.4,
             seed=0,
-            phase2=Phase2Config(improve_mode="off", forcing_mode="empty_bay"),
+            phase2=_phase2_cfg(scoring_profile, improve_mode="off", forcing_mode="empty_bay"),
         ),
         OuterConfig(
             xi=0.3,
             seed=1,
-            phase2=Phase2Config(improve_mode="jostle_2exchange", forcing_mode="empty_bay"),
+            phase2=_phase2_cfg(scoring_profile, improve_mode="jostle_2exchange", forcing_mode="empty_bay"),
         ),
         OuterConfig(
             xi=0.3,
             seed=4,
-            phase2=Phase2Config(
+            phase2=_phase2_cfg(
+                scoring_profile,
                 improve_mode="jostle_2exchange",
                 forcing_mode="empty_bay",
                 order_mode="mst",
@@ -46,7 +61,8 @@ def default_portfolio() -> list:
         OuterConfig(
             xi=0.5,
             seed=5,
-            phase2=Phase2Config(
+            phase2=_phase2_cfg(
+                scoring_profile,
                 improve_mode="off",
                 forcing_mode="earliest_slot",
                 order_mode="mst",
@@ -90,9 +106,10 @@ def _run_single(prob_info: dict, wall_budget: float, cfg: OuterConfig, pre=None,
 
 def optimize_portfolio(prob_info: dict, time_limit: float,
                        configs: list = None, n_workers: int = 4,
-                       deadline=None, deadline_s=None) -> dict:
+                       deadline=None, deadline_s=None,
+                       scoring_profile: str | None = None) -> dict:
     use_default = configs is None
-    configs = configs or default_portfolio()
+    configs = configs or default_portfolio(scoring_profile=scoring_profile)
     n = len(configs)
     t0 = time.perf_counter()
 
@@ -178,6 +195,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                 pre_path or "",
                 "" if deadline is None else str(deadline),
                 "" if deadline_s is None else str(deadline_s),
+                scoring_profile or "",
             ]
             p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             procs.append((p, out_path))
