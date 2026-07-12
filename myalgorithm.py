@@ -6,26 +6,35 @@ import time
 from Outer.portfolio import default_portfolio, optimize_portfolio
 
 
-DEFAULT_SCORING_PROFILE = "forced_risk_20"  # FIXME: tune the default scoring profile after broader experiments.
-DEFAULT_DEADLINE_SAFETY_MARGIN_S = 2.0  # FIXME: tune the default deadline safety margin.
+# baseline: fr20는 rescue 위 2x2 ablation 통과 후 재승격(ISSUE4 §0-2). env로 실험.
+DEFAULT_SCORING_PROFILE = "baseline"
 
 
 def _resolve_scoring_profile():
     return os.environ.get("OGC_SCORING_PROFILE", DEFAULT_SCORING_PROFILE)
 
 
+def _alns_reserve(timelimit):
+    """timelimit - budget. 부모가 워커를 deadline + wrapup(8~25s)에 강제 종료하므로
+    reserve > wrapup 이면 반환 < timelimit 보장(전 T에서 reserve - wrapup >= 4)."""
+    return min(max(12.0, 0.06 * float(timelimit)), 30.0)
+
+
 def _resolve_alns_deadline_s(timelimit):
+    """deadline budget = timelimit - reserve. OGC_ALNS_DEADLINE_S env는 실험용이며
+    제출 환경 유출 시 timeout(-1) 방지를 위해 budget으로 상한한다(§0-3)."""
+    budget = max(5.0, float(timelimit) - _alns_reserve(timelimit))
     env = os.environ.get("OGC_ALNS_DEADLINE_S", "").strip()
     if env:
         try:
-            return max(1.0, float(env))
+            return max(1.0, min(float(env), budget))
         except ValueError:
             pass
-    return max(1.0, float(timelimit) - DEFAULT_DEADLINE_SAFETY_MARGIN_S)
+    return budget
 
 
 def algorithm(prob_info, timelimit=60):
-    """Submission entry point."""
+    """Submission entry point. deadline을 timelimit에서 유도(초과 시 -1점, §3.2)."""
     scoring_profile = _resolve_scoring_profile()
     alns_deadline_s = _resolve_alns_deadline_s(timelimit)
     start_time = time.perf_counter()

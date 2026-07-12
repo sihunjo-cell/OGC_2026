@@ -46,6 +46,13 @@ class Phase2Config:
     # Repair
     max_repair_passes: int = 2
 
+    # Forced-fallback rescue: force_place(빈 bay) 전에 부분점유 슬롯 재시도.
+    # 둘 다 False면 이전 동작 바이트 동일. budget은 디코드당 재시도 시도 상한.
+    force_retry_construction: bool = False       # 큰 문제 비용 커서 기본 OFF
+    force_retry_construction_budget: int = 32
+    force_retry_phase_b: bool = True
+    force_retry_budget: int = 16                 # E1로 확정 (dose-response)
+
     _resolving_scoring_profile: bool = field(init=False, repr=False, default=False)
     _resolved_scoring_params: dict = field(init=False, repr=False, default_factory=dict)
     _scoring_overrides: dict = field(init=False, repr=False, default_factory=dict)

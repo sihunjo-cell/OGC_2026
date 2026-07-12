@@ -281,7 +281,7 @@ def realize(bay: list, prob_info: dict, pre, phase2cfg=None, deadline=None) -> S
             break
 
         t0 = time.perf_counter()
-        res = PlaceAndCrane(prob_info, p1, pre, cfg)
+        res = PlaceAndCrane(prob_info, p1, pre, cfg, deadline=deadline)
         runtime_ms = int((time.perf_counter() - t0) * 1000)
         sol, meta = _solution_from_result(bay, p1, res, prob_info, utils_mod)
         _enrich_solution_scoring_metrics(sol, runtime_ms)
@@ -347,7 +347,7 @@ def realize(bay: list, prob_info: dict, pre, phase2cfg=None, deadline=None) -> S
         selected._phase2_variant_debug = debug_rows
         return selected
 
-    res = PlaceAndCrane(prob_info, p1, pre, base_cfg)
+    res = PlaceAndCrane(prob_info, p1, pre, base_cfg, deadline=deadline)
     sol, _ = _solution_from_result(bay, p1, res, prob_info, utils_mod)
     sol._phase2_variant_debug = debug_rows
     return sol

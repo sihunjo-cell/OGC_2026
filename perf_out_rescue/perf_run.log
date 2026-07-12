@@ -1,0 +1,125 @@
+[2026-07-12 15:34:02] START probs=40 tasks=120 resume=0 out=C:\Users\simon\OGC\OGC_2026\perf_out_rescue
+[2026-07-12 15:34:02]   mode=both · anytime horizon=180s(member0 단일 ALNS, 시계=load+preprocess+alns, 진단 제외) · real timelimits=[30.0, 60.0] grace=0.15 · 체크포인트=['10', '20', '30', '40', '50', '60', '90', '120', '150', '180']
+[2026-07-12 15:34:02] numba JIT warmup...
+[2026-07-12 15:34:12] warmup done.
+[2026-07-12 15:37:28]   train/prob_1|anytime|h180          feas=True first=10.2s last_imp=38.6s sat=Y iters=95 obj=15594841 (193.805s)
+[2026-07-12 15:40:45]   train/prob_2|anytime|h180          feas=True first=11.7s last_imp=54.5s sat=Y iters=109 obj=4340219 (193.685s)
+[2026-07-12 15:44:04]   train/prob_3|anytime|h180          feas=True first=21.2s last_imp=142.0s sat=Y iters=72 obj=20254216 (196.478s)
+[2026-07-12 15:47:25]   train/prob_4|anytime|h180          feas=True first=29.1s last_imp=167.0s sat=N iters=55 obj=12554262 (199.76s)
+[2026-07-12 15:50:35]   train/prob_5|anytime|h180          feas=True first=8.0s last_imp=156.2s sat=N iters=93 obj=10553574 (187.859s)
+[2026-07-12 15:53:48]   train/prob_6|anytime|h180          feas=True first=10.4s last_imp=59.5s sat=Y iters=67 obj=51576103 (191.575s)
+[2026-07-12 15:56:59]   train/prob_7|anytime|h180          feas=True first=7.4s last_imp=160.4s sat=N iters=96 obj=15054043 (189.75s)
+[2026-07-12 16:00:10]   train/prob_8|anytime|h180          feas=True first=7.2s last_imp=105.1s sat=Y iters=96 obj=8484008 (189.031s)
+[2026-07-12 16:03:42]   train/prob_9|anytime|h180          feas=True first=19.3s last_imp=151.8s sat=N iters=11 obj=125541251 (207.519s)
+[2026-07-12 16:07:14]   train/prob_10|anytime|h180         feas=True first=14.1s last_imp=40.2s sat=Y iters=16 obj=46217254 (207.156s)
+[2026-07-12 16:10:54]   train/prob_11|anytime|h180         feas=True first=45.8s last_imp=88.5s sat=Y iters=22 obj=24928669 (217.938s)
+[2026-07-12 16:14:22]   train/prob_12|anytime|h180         feas=True first=13.2s last_imp=96.8s sat=Y iters=32 obj=47390011 (203.261s)
+[2026-07-12 16:17:43]   train/prob_13|anytime|h180         feas=True first=14.8s last_imp=170.8s sat=N iters=38 obj=50010956 (198.43s)
+[2026-07-12 16:21:37]   train/prob_14|anytime|h180         feas=True first=64.8s last_imp=131.8s sat=Y iters=12 obj=206553244 (232.009s)
+[2026-07-12 16:25:03]   train/prob_15|anytime|h180         feas=True first=11.6s last_imp=145.1s sat=N iters=22 obj=29748858 (200.323s)
+[2026-07-12 16:28:17]   train/prob_16|anytime|h180         feas=True first=9.2s last_imp=83.2s sat=Y iters=63 obj=19639982 (191.818s)
+[2026-07-12 16:31:49]   train/prob_17|anytime|h180         feas=True first=16.5s last_imp=38.5s sat=Y iters=38 obj=18485283 (206.314s)
+[2026-07-12 16:35:16]   train/prob_18|anytime|h180         feas=True first=17.4s last_imp=176.4s sat=N iters=27 obj=84940982 (204.719s)
+[2026-07-12 16:38:33]   train/prob_19|anytime|h180         feas=True first=14.4s last_imp=88.1s sat=Y iters=34 obj=34107284 (195.182s)
+[2026-07-12 16:42:29]   train/prob_20|anytime|h180         feas=True first=71.1s last_imp=71.1s sat=Y iters=3 obj=116895182 (229.94s)
+[2026-07-12 16:46:00]   train/prob_21|anytime|h180         feas=True first=20.1s last_imp=30.5s sat=Y iters=67 obj=72817390 (208.808s)
+[2026-07-12 16:49:19]   train/prob_22|anytime|h180         feas=True first=10.1s last_imp=10.1s sat=Y iters=35 obj=17259221 (193.01s)
+[2026-07-12 16:53:07]   train/prob_23|anytime|h180         feas=True first=51.3s last_imp=121.5s sat=Y iters=20 obj=100585808 (223.787s)
+[2026-07-12 16:56:37]   train/prob_24|anytime|h180         feas=True first=26.9s last_imp=26.9s sat=Y iters=15 obj=49874510 (204.953s)
+[2026-07-12 16:59:56]   train/prob_25|anytime|h180         feas=True first=20.8s last_imp=98.3s sat=Y iters=52 obj=6112560 (196.655s)
+[2026-07-12 17:03:31]   train/prob_26|anytime|h180         feas=True first=36.2s last_imp=126.2s sat=Y iters=8 obj=473011761 (210.579s)
+[2026-07-12 17:07:27]   train/prob_27|anytime|h180         feas=True first=69.1s last_imp=111.2s sat=Y iters=4 obj=493719663 (231.72s)
+[2026-07-12 17:10:55]   train/prob_28|anytime|h180         feas=True first=24.7s last_imp=105.7s sat=Y iters=22 obj=186399904 (203.964s)
+[2026-07-12 17:14:30]   train/prob_29|anytime|h180         feas=True first=31.6s last_imp=31.6s sat=Y iters=11 obj=41444483 (210.3s)
+[2026-07-12 17:18:23]   train/prob_30|anytime|h180         feas=True first=40.4s last_imp=121.2s sat=Y iters=9 obj=121071159 (230.396s)
+[2026-07-12 17:22:02]   train/prob_31|anytime|h180         feas=True first=29.9s last_imp=108.3s sat=Y iters=11 obj=460242679 (214.22s)
+[2026-07-12 17:26:07]   train/prob_32|anytime|h180         feas=True first=44.8s last_imp=154.2s sat=N iters=8 obj=95359026 (238.182s)
+[2026-07-12 17:30:25]   train/prob_33|anytime|h180         feas=True first=67.7s last_imp=174.2s sat=N iters=4 obj=237394745 (254.135s)
+[2026-07-12 17:34:05]   train/prob_34|anytime|h180         feas=True first=32.8s last_imp=171.0s sat=N iters=10 obj=45567686 (213.984s)
+[2026-07-12 17:37:58]   train/prob_35|anytime|h180         feas=True first=54.2s last_imp=99.2s sat=Y iters=4 obj=80792255 (228.418s)
+[2026-07-12 17:42:05]   train/prob_36|anytime|h180         feas=True first=51.6s last_imp=51.6s sat=Y iters=3 obj=9911747 (239.437s)
+[2026-07-12 17:47:01]   train/prob_37|anytime|h180         feas=True first=73.3s last_imp=92.9s sat=Y iters=4 obj=74724594 (286.601s)
+[2026-07-12 17:51:03]   train/prob_38|anytime|h180         feas=True first=48.7s last_imp=85.6s sat=Y iters=6 obj=1388244402 (239.075s)
+[2026-07-12 17:55:04]   train/prob_39|anytime|h180         feas=True first=67.3s last_imp=126.8s sat=Y iters=3 obj=549659177 (237.803s)
+[2026-07-12 17:59:09]   train/prob_40|anytime|h180         feas=True first=45.6s last_imp=161.8s sat=N iters=4 obj=100336944 (241.745s)
+[2026-07-12 17:59:32]   train/prob_1|real|T30              OK algo=19.7s proc=20.0s margin=0.344 killed=False
+[2026-07-12 18:00:25]   train/prob_1|real|T60              OK algo=49.5s proc=49.8s margin=0.175 killed=False
+[2026-07-12 18:00:47]   train/prob_2|real|T30              OK algo=19.3s proc=19.7s margin=0.356 killed=False
+[2026-07-12 18:01:39]   train/prob_2|real|T60              OK algo=48.8s proc=49.2s margin=0.186 killed=False
+[2026-07-12 18:02:01]   train/prob_3|real|T30              OK algo=18.6s proc=18.9s margin=0.379 killed=False
+[2026-07-12 18:02:53]   train/prob_3|real|T60              OK algo=49.0s proc=49.4s margin=0.183 killed=False
+[2026-07-12 18:03:14]   train/prob_4|real|T30              OK algo=18.1s proc=18.4s margin=0.397 killed=False
+[2026-07-12 18:04:07]   train/prob_4|real|T60              OK algo=49.8s proc=50.1s margin=0.169 killed=False
+[2026-07-12 18:04:29]   train/prob_5|real|T30              OK algo=19.6s proc=19.9s margin=0.347 killed=False
+[2026-07-12 18:05:21]   train/prob_5|real|T60              OK algo=49.0s proc=49.4s margin=0.184 killed=False
+[2026-07-12 18:05:44]   train/prob_6|real|T30              OK algo=18.3s proc=18.6s margin=0.391 killed=False
+[2026-07-12 18:06:37]   train/prob_6|real|T60              OK algo=50.0s proc=50.3s margin=0.167 killed=False
+[2026-07-12 18:07:00]   train/prob_7|real|T30              OK algo=19.1s proc=19.5s margin=0.362 killed=False
+[2026-07-12 18:07:53]   train/prob_7|real|T60              OK algo=49.6s proc=49.9s margin=0.173 killed=False
+[2026-07-12 18:08:15]   train/prob_8|real|T30              OK algo=19.1s proc=19.4s margin=0.364 killed=False
+[2026-07-12 18:09:08]   train/prob_8|real|T60              OK algo=49.4s proc=49.8s margin=0.177 killed=False
+[2026-07-12 18:09:30]   train/prob_9|real|T30              OK algo=18.7s proc=19.0s margin=0.376 killed=False
+[2026-07-12 18:10:24]   train/prob_9|real|T60              OK algo=51.2s proc=51.5s margin=0.147 killed=False
+[2026-07-12 18:10:48]   train/prob_10|real|T30             OK algo=21.3s proc=21.6s margin=0.291 killed=False
+[2026-07-12 18:11:42]   train/prob_10|real|T60             OK algo=50.5s proc=50.8s margin=0.159 killed=False
+[2026-07-12 18:12:07]   train/prob_11|real|T30             OK algo=22.8s proc=23.1s margin=0.238 killed=False
+[2026-07-12 18:13:02]   train/prob_11|real|T60             OK algo=51.7s proc=52.0s margin=0.139 killed=False
+[2026-07-12 18:13:25]   train/prob_12|real|T30             OK algo=19.6s proc=19.9s margin=0.347 killed=False
+[2026-07-12 18:14:18]   train/prob_12|real|T60             OK algo=50.4s proc=50.6s margin=0.161 killed=False
+[2026-07-12 18:14:43]   train/prob_13|real|T30             OK algo=21.0s proc=21.4s margin=0.300 killed=False
+[2026-07-12 18:15:36]   train/prob_13|real|T60             OK algo=49.6s proc=49.9s margin=0.174 killed=False
+[2026-07-12 18:16:04]   train/prob_14|real|T30             OK algo=25.2s proc=25.6s margin=0.160 killed=False
+[2026-07-12 18:16:59]   train/prob_14|real|T60             OK algo=51.7s proc=52.1s margin=0.138 killed=False
+[2026-07-12 18:17:21]   train/prob_15|real|T30             OK algo=18.8s proc=19.1s margin=0.374 killed=False
+[2026-07-12 18:18:14]   train/prob_15|real|T60             OK algo=49.6s proc=50.0s margin=0.173 killed=False
+[2026-07-12 18:18:36]   train/prob_16|real|T30             OK algo=19.0s proc=19.3s margin=0.367 killed=False
+[2026-07-12 18:19:30]   train/prob_16|real|T60             OK algo=50.0s proc=50.3s margin=0.167 killed=False
+[2026-07-12 18:19:52]   train/prob_17|real|T30             OK algo=19.0s proc=19.4s margin=0.367 killed=False
+[2026-07-12 18:20:46]   train/prob_17|real|T60             OK algo=50.9s proc=51.3s margin=0.152 killed=False
+[2026-07-12 18:21:08]   train/prob_18|real|T30             OK algo=18.4s proc=18.7s margin=0.386 killed=False
+[2026-07-12 18:22:03]   train/prob_18|real|T60             OK algo=51.9s proc=52.3s margin=0.136 killed=False
+[2026-07-12 18:22:26]   train/prob_19|real|T30             OK algo=20.0s proc=20.2s margin=0.335 killed=False
+[2026-07-12 18:23:28]   train/prob_19|real|T60             OK algo=52.5s proc=53.1s margin=0.124 killed=False
+[2026-07-12 18:24:11]   train/prob_20|real|T30             FAIL_TIMEOUT algo=NAs proc=35.1s margin=NA killed=True
+[2026-07-12 18:25:18]   train/prob_20|real|T60             OK algo=57.1s proc=57.9s margin=0.048 killed=False
+[2026-07-12 18:25:54]   train/prob_21|real|T30             OK algo=27.1s proc=27.9s margin=0.095 killed=False
+[2026-07-12 18:26:53]   train/prob_21|real|T60             OK algo=49.3s proc=50.0s margin=0.178 killed=False
+[2026-07-12 18:27:27]   train/prob_22|real|T30             OK algo=25.0s proc=25.7s margin=0.166 killed=False
+[2026-07-12 18:28:30]   train/prob_22|real|T60             OK algo=53.7s proc=54.4s margin=0.105 killed=False
+[2026-07-12 18:29:14]   train/prob_23|real|T30             FAIL_TIMEOUT algo=NAs proc=35.1s margin=NA killed=True
+[2026-07-12 18:30:31]   train/prob_23|real|T60             FAIL_TIMEOUT algo=67.5s proc=68.2s margin=-0.124 killed=False
+[2026-07-12 18:31:11]   train/prob_24|real|T30             OK algo=29.5s proc=30.2s margin=0.017 killed=False
+[2026-07-12 18:32:12]   train/prob_24|real|T60             OK algo=51.9s proc=52.6s margin=0.135 killed=False
+[2026-07-12 18:32:49]   train/prob_25|real|T30             OK algo=27.7s proc=28.3s margin=0.076 killed=False
+[2026-07-12 18:33:47]   train/prob_25|real|T60             OK algo=48.5s proc=49.1s margin=0.192 killed=False
+[2026-07-12 18:34:32]   train/prob_26|real|T30             FAIL_TIMEOUT algo=NAs proc=35.0s margin=NA killed=True
+[2026-07-12 18:35:36]   train/prob_26|real|T60             OK algo=54.1s proc=54.8s margin=0.098 killed=False
+[2026-07-12 18:36:20]   train/prob_27|real|T30             FAIL_TIMEOUT algo=NAs proc=35.0s margin=NA killed=True
+[2026-07-12 18:37:37]   train/prob_27|real|T60             FAIL_TIMEOUT algo=NAs proc=69.6s margin=NA killed=True
+[2026-07-12 18:38:15]   train/prob_28|real|T30             OK algo=27.1s proc=27.8s margin=0.098 killed=False
+[2026-07-12 18:39:15]   train/prob_28|real|T60             OK algo=49.8s proc=50.8s margin=0.169 killed=False
+[2026-07-12 18:39:53]   train/prob_29|real|T30             OK algo=28.0s proc=28.7s margin=0.065 killed=False
+[2026-07-12 18:40:45]   train/prob_29|real|T60             OK algo=48.4s proc=48.9s margin=0.193 killed=False
+[2026-07-12 18:41:14]   train/prob_30|real|T30             OK algo=24.6s proc=24.9s margin=0.181 killed=False
+[2026-07-12 18:42:09]   train/prob_30|real|T60             OK algo=51.8s proc=52.1s margin=0.136 killed=False
+[2026-07-12 18:42:31]   train/prob_31|real|T30             OK algo=18.2s proc=18.6s margin=0.393 killed=False
+[2026-07-12 18:43:32]   train/prob_31|real|T60             OK algo=56.3s proc=56.7s margin=0.061 killed=False
+[2026-07-12 18:44:01]   train/prob_32|real|T30             OK algo=25.3s proc=25.6s margin=0.158 killed=False
+[2026-07-12 18:45:01]   train/prob_32|real|T60             OK algo=57.2s proc=57.5s margin=0.047 killed=False
+[2026-07-12 18:45:24]   train/prob_33|real|T30             OK algo=19.2s proc=19.5s margin=0.359 killed=False
+[2026-07-12 18:46:27]   train/prob_33|real|T60             OK algo=59.1s proc=59.4s margin=0.015 killed=False
+[2026-07-12 18:46:49]   train/prob_34|real|T30             OK algo=19.0s proc=19.3s margin=0.365 killed=False
+[2026-07-12 18:47:49]   train/prob_34|real|T60             OK algo=55.7s proc=56.0s margin=0.071 killed=False
+[2026-07-12 18:48:14]   train/prob_35|real|T30             OK algo=21.5s proc=21.8s margin=0.284 killed=False
+[2026-07-12 18:49:14]   train/prob_35|real|T60             OK algo=56.4s proc=56.6s margin=0.060 killed=False
+[2026-07-12 18:49:37]   train/prob_36|real|T30             OK algo=20.6s proc=20.8s margin=0.314 killed=False
+[2026-07-12 18:50:40]   train/prob_36|real|T60             OK algo=59.2s proc=59.5s margin=0.013 killed=False
+[2026-07-12 18:51:12]   train/prob_37|real|T30             OK algo=28.4s proc=28.7s margin=0.052 killed=False
+[2026-07-12 18:52:12]   train/prob_37|real|T60             OK algo=57.3s proc=57.5s margin=0.046 killed=False
+[2026-07-12 18:52:42]   train/prob_38|real|T30             OK algo=26.0s proc=26.3s margin=0.134 killed=False
+[2026-07-12 18:53:43]   train/prob_38|real|T60             OK algo=57.2s proc=57.4s margin=0.047 killed=False
+[2026-07-12 18:54:21]   train/prob_39|real|T30             FAIL_TIMEOUT algo=NAs proc=35.0s margin=NA killed=True
+[2026-07-12 18:55:25]   train/prob_39|real|T60             FAIL_TIMEOUT algo=60.5s proc=60.8s margin=-0.009 killed=False
+[2026-07-12 18:56:03]   train/prob_40|real|T30             FAIL_TIMEOUT algo=NAs proc=34.9s margin=NA killed=True
+[2026-07-12 18:57:07]   train/prob_40|real|T60             OK algo=57.3s proc=57.8s margin=0.045 killed=False
+[2026-07-12 18:57:07] DONE 120/120 report=C:\Users\simon\OGC\OGC_2026\perf_out_rescue\perf_report_rescue.md

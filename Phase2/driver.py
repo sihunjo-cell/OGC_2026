@@ -6,6 +6,8 @@ place_block(충돌 검사, 필요시 크레인 게이트)한다. 실패하면 �
 
 from __future__ import annotations
 
+import time
+
 from .config import Phase2Config
 from .contract import Phase2Result
 from .residents import resident_sets
@@ -44,11 +46,17 @@ def build_solution(coords, orient, entry, exit_, bay, block_ids) -> dict:
     return {"operations": ops}
 
 
-def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Phase2Result:
+def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
+                  deadline=None) -> Phase2Result:
     cfg = cfg or Phase2Config()
     cfg.resolve_scoring_profile()
     if getattr(cfg, "_debug_variant_stats", None) is None:
         cfg._debug_variant_stats = {}
+
+    def _past():
+        # 마감 초과 시 이후 배치·재시도를 빈 bay 강제로 스킵(단일 디코드 오버슛 상한).
+        return deadline is not None and time.perf_counter() >= deadline
+
     blocks = prob_info["blocks"]
     n = len(blocks)
     P = [b["processing_time"] for b in blocks]
@@ -60,6 +68,8 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Pha
     exit_ = list(p1_out.exit_)
     coords: dict = {}
     orient: dict = {}
+    forced_cons: set = set()   # 구성 시 빈 bay로 강제된 블록(진단용)
+    cons_retry = [cfg.force_retry_construction_budget]
 
     bay_blocks = [[] for _ in range(pre.n_bays)]
     for i in range(n):
@@ -104,23 +114,32 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Pha
         return None
 
     def _place_one(i, j, placed_here, G):
-        residents = [k for k in placed_here if _overlap(entry, exit_, i, k)]
-        best = place_block(i, j, residents, coords, orient, entry, exit_,
-                           prob_info, pre, cfg, m=len(placed_here), G=G)
-        if best is not None:
-            _commit(i, j, best.pos, best.o, placed_here)
-            return
-        # 자기 시간에 못 놓음 -> 가장 이른 later feasible 슬롯 선택
-        slot = _earliest_slot(i, j, placed_here) if cfg.forcing_mode == "earliest_slot" else None
-        if slot is not None:
-            pos, o, e, x = slot
-            entry[i], exit_[i] = e, x
-            _commit(i, j, pos, o, placed_here)
-        else:
-            # 최후 수단: 빈 bay window + IFP 좌하단 코너
-            pos, o, e, x = rp.force_place(i, j, _schedule_excluding(j, i), pre, R, P)
-            entry[i], exit_[i] = e, x
-            _commit(i, j, pos, o, placed_here)
+        if not _past():   # 마감 전에만 정식 배치 시도(초과 시 아래 빈 bay 강제)
+            residents = [k for k in placed_here if _overlap(entry, exit_, i, k)]
+            best = place_block(i, j, residents, coords, orient, entry, exit_,
+                               prob_info, pre, cfg, m=len(placed_here), G=G)
+            if best is not None:
+                _commit(i, j, best.pos, best.o, placed_here)
+                return
+            # 빈 bay로 밀기 전 부분점유 슬롯 재시도. earliest_slot 모드는 무제한,
+            # force_retry_construction 경로는 budget 상한(비용 폭증 방지).
+            use_slot = False
+            if cfg.forcing_mode == "earliest_slot":
+                use_slot = True
+            elif cfg.force_retry_construction and cons_retry[0] > 0:
+                use_slot = True
+                cons_retry[0] -= 1
+            slot = _earliest_slot(i, j, placed_here) if use_slot else None
+            if slot is not None:
+                pos, o, e, x = slot
+                entry[i], exit_[i] = e, x
+                _commit(i, j, pos, o, placed_here)
+                return
+        # 최후 수단: 빈 bay window + IFP 좌하단 코너
+        pos, o, e, x = rp.force_place(i, j, _schedule_excluding(j, i), pre, R, P)
+        entry[i], exit_[i] = e, x
+        _commit(i, j, pos, o, placed_here)
+        forced_cons.add(i)
 
     # ---- 배치, bay 하나씩 ----------------------------------------------
     for j in range(pre.n_bays):
@@ -160,20 +179,39 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Pha
         for v in sorted(conflicts, key=lambda k: (rp.z1_marginal(k, exit_, D), k)):
             rp.shift_later(v, entry, exit_, P, stage)
 
-    # Phase B: 대량 safety net. 강제된 블록마다 다른 블록이 하나도 없는 window를
-    # 주므로 다시 충돌하지 않는다. check_feasibility가 첫 실패 stage만 보고하므로
-    # 루프. 매 패스마다 새 블록이 최소 1개 강제되니 종료.
-    guard = 0
-    while not feasible and conflicts and guard <= n:
+    # Phase B: force_place(빈 창) 전에 부분점유 슬롯 재시도. 실패/재충돌 시 force_place로
+    # 승격(빈 창은 충돌 불가 = 종착 보장). retried는 패스 간 유지, 마지막 4패스는 순수 강제.
+    retried: set = set()
+    rescue_budget = cfg.force_retry_budget
+    slot_rescued = retry_reverted = 0
+    guard, guard_max = 0, n + 8
+    while not feasible and conflicts and guard <= guard_max:
         guard += 1
-        for v in conflicts:
+        allow_rescue = (cfg.force_retry_phase_b and rescue_budget > 0
+                        and guard <= guard_max - 4 and not _past())
+        # z1_marginal 오름차순(slack 블록 먼저 -> 크레인 연쇄 충돌 적음). OFF면 원시 순서.
+        order = (sorted(conflicts, key=lambda k: (rp.z1_marginal(k, exit_, D), k))
+                 if cfg.force_retry_phase_b else conflicts)
+        for v in order:
             if v in forced:
                 continue
             j = bay[v]
-            pos, o, e, x = rp.force_place(v, j, _schedule_excluding(j, v), pre, R, P)
+            slot = None
+            if allow_rescue and rescue_budget > 0 and v not in retried:
+                rescue_budget -= 1     # 시도 카운트: _earliest_slot 호출수 상한
+                others = [k for k in bay_blocks[j] if k in coords and k != v]
+                slot = _earliest_slot(v, j, others)
+            if slot is not None:
+                pos, o, e, x = slot
+                retried.add(v)
+                slot_rescued += 1
+            else:
+                if v in retried:
+                    retry_reverted += 1     # 구조됐다 재충돌 -> 강제로 승격
+                pos, o, e, x = rp.force_place(v, j, _schedule_excluding(j, v), pre, R, P)
+                forced.add(v)
             coords[v], orient[v] = pos, o
             entry[v], exit_[v] = e, x
-            forced.add(v)
         sol = build_solution(coords, orient, entry, exit_, bay, range(n))
         feasible, conflicts, stage = crane_feasibility(prob_info, sol)
 
@@ -224,6 +262,10 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None) -> Pha
             "stage": stage,
             "unresolved": conflicts,
             "forced": sorted(forced),
+            "forced_construction": sorted(forced_cons),
+            "slot_rescued": slot_rescued,
+            "retry_reverted": retry_reverted,
+            "phaseB_passes": guard,
             "scoring_profile": cfg.scoring_profile,
             "scoring_params": cfg.scoring_params(),
             "scoring_metrics": scoring_stats,

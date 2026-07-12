@@ -384,6 +384,11 @@ def run_one_anytime(path, horizon, checkpoints, do_profile=True,
         rec["alns_stopped_by_deadline"] = bool(stats.get("stopped_by_deadline", False))
         rec["alns_feasible"] = bool(getattr(s_best, "feasible", False))
         rec["alns_best_forced"] = getattr(s_best, "forced", None)
+        # rescue 텔레메트리(driver info -> Solution.phase2_info 자동 전파, V3)
+        _p2i = getattr(s_best, "phase2_info", None) or {}
+        rec["slot_rescued"] = _p2i.get("slot_rescued")
+        rec["retry_reverted"] = _p2i.get("retry_reverted")
+        rec["forced_construction"] = len(_p2i.get("forced_construction", []) or [])
         rec["alns_best_Z1"] = getattr(s_best, "Z1", None)
         rec["alns_best_Z2"] = getattr(s_best, "Z2", None)
         rec["alns_best_Z3"] = getattr(s_best, "Z3", None)
