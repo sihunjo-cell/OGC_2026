@@ -76,16 +76,7 @@ from Outer.alns import alns
 from Outer.portfolio import default_portfolio
 from Outer.realize import realize
 
-DEFAULT_REPORT_SCORING_PROFILE = "forced_risk_20"  # FIXME: keep the report default scoring profile aligned with submission experiments.
-DEFAULT_REPORT_DEADLINE_SAFETY_MARGIN_S = 2.0  # FIXME: keep the report default deadline safety margin aligned with submission experiments.
-DEFAULT_SCORING_PROFILE = DEFAULT_REPORT_SCORING_PROFILE
-
-
-def _resolve_report_scoring_profile(scoring_profile: str | None = None) -> str:
-    if scoring_profile:
-        return scoring_profile
-    env = os.environ.get("OGC_SCORING_PROFILE", "").strip()
-    return env or DEFAULT_REPORT_SCORING_PROFILE
+DEFAULT_REPORT_DEADLINE_SAFETY_MARGIN_S = 2.0  # anytime 관측 마감 여유(초).
 
 
 def _resolve_report_alns_deadline_s(alns_deadline_s: float | None, timelimit: float) -> float:
@@ -100,26 +91,20 @@ def _resolve_report_alns_deadline_s(alns_deadline_s: float | None, timelimit: fl
     return max(1.0, float(timelimit) - DEFAULT_REPORT_DEADLINE_SAFETY_MARGIN_S)
 
 
-def _phase2_cfg_for_report(scoring_profile: str | None = None) -> Phase2Config:
-    return Phase2Config(scoring_profile=_resolve_report_scoring_profile(scoring_profile))
+def _phase2_cfg_for_report() -> Phase2Config:
+    return Phase2Config()
 
 
-def _member0_for_report(scoring_profile: str | None = None):
-    return deepcopy(default_portfolio(scoring_profile=_resolve_report_scoring_profile(scoring_profile))[0])
-
-
-def _report_profile_tag(scoring_profile: str | None = None) -> str:
-    return _resolve_report_scoring_profile(scoring_profile)
+def _member0_for_report():
+    return deepcopy(default_portfolio()[0])
 
 
 def _report_run_key(kind: str, prob: str, value: float,
-                    scoring_profile: str | None = None,
                     alns_deadline_s: float | None = None) -> str:
-    profile_tag = _report_profile_tag(scoring_profile)
     deadline_tag = "default" if alns_deadline_s is None else f"{float(alns_deadline_s):g}"
     if kind == "anytime":
-        return f"{prob}|anytime|h{value:g}|sp={profile_tag}|ad={deadline_tag}"
-    return f"{prob}|real|T{value:g}|sp={profile_tag}|ad={deadline_tag}"
+        return f"{prob}|anytime|h{value:g}|ad={deadline_tag}"
+    return f"{prob}|real|T{value:g}|ad={deadline_tag}"
 
 # 그림(matplotlib). 없으면 표만 내고 그림은 건너뛴다(보고서 본체와 독립 -> 안 깨짐).
 try:
@@ -280,7 +265,7 @@ def _derive_anytime(rec, best_events, horizon, checkpoints):
 
 
 def run_one_anytime(path, horizon, checkpoints, do_profile=True,
-                    scoring_profile=None, alns_deadline_s=None):
+                    alns_deadline_s=None):
     """문제 1개 측정. 오염 차단이 최우선 설계 원칙:
 
     [1] 진단(pre_diag)과 관측(pre_run)은 각각 fresh preprocess로 분리한다.
@@ -291,17 +276,15 @@ def run_one_anytime(path, horizon, checkpoints, do_profile=True,
         진단이 관측 창을 다르게 깎아먹는 불공정 제거.
     [3] 프로파일(warm realize)은 관측이 끝난 뒤에만 수행한다."""
     key = prob_key(path)
-    profile_tag = _report_profile_tag(scoring_profile)
     effective_alns_deadline_s = _resolve_report_alns_deadline_s(alns_deadline_s, horizon)
     rec = {
         "schema": SCHEMA,
-        "run_key": _report_run_key("anytime", key, horizon, scoring_profile, effective_alns_deadline_s),
+        "run_key": _report_run_key("anytime", key, horizon, effective_alns_deadline_s),
         "mode": "anytime",
         "prob": key,
         "ts": _now(),
         "error": None,
         "horizon_s": horizon,
-        "scoring_profile": profile_tag,
         "alns_deadline_s": effective_alns_deadline_s,
     }
     t_all = time.perf_counter()
@@ -331,7 +314,7 @@ def run_one_anytime(path, horizon, checkpoints, do_profile=True,
         rec["t_phase1_timing"] = time.perf_counter() - t
 
         t = time.perf_counter()
-        res = PlaceAndCrane(prob, p1out, pre_diag, _phase2_cfg_for_report(scoring_profile))
+        res = PlaceAndCrane(prob, p1out, pre_diag, _phase2_cfg_for_report())
         rec["t_phase2_place_cold"] = time.perf_counter() - t
 
         feasible = bool(res.info.get("feasible", False))
@@ -361,7 +344,7 @@ def run_one_anytime(path, horizon, checkpoints, do_profile=True,
             prob,
             pre_run,
             budget_s=None,
-            cfg=_member0_for_report(scoring_profile),
+            cfg=_member0_for_report(),
             deadline=t0 + alns_deadline_scope_s,
             deadline_s=alns_deadline_scope_s,
             t0=t0,
@@ -422,7 +405,7 @@ def run_one_anytime(path, horizon, checkpoints, do_profile=True,
         if do_profile:
             pr = cProfile.Profile()
             pr.enable()
-            realize(bay, prob, pre_run, _phase2_cfg_for_report(scoring_profile))
+            realize(bay, prob, pre_run, _phase2_cfg_for_report())
             pr.disable()
             rec["top_funcs"], rec["profile_total_self_s"] = _top_funcs_from_profile(pr, max(TOP_FUNCS, 20))
 
@@ -485,21 +468,19 @@ def _kill_tree(proc):
 
 
 def run_one_real(path, tl, grace_frac, out_dir, runner_path,
-                 scoring_profile=None, alns_deadline_s=None):
+                 alns_deadline_s=None):
     """공식 채점 계약 그대로 1회: 새 프로세스에서 algorithm(prob, tl) 실행,
     tl*(1+grace)에 하드킬, §3.3 규칙(-1)으로 채점."""
     key = prob_key(path)
-    profile_tag = _report_profile_tag(scoring_profile)
     effective_alns_deadline_s = _resolve_report_alns_deadline_s(alns_deadline_s, tl)
     rec = {
         "schema": SCHEMA,
-        "run_key": _report_run_key("real", key, tl, scoring_profile, effective_alns_deadline_s),
+        "run_key": _report_run_key("real", key, tl, effective_alns_deadline_s),
         "mode": "real",
         "prob": key,
         "ts": _now(),
         "error": None,
         "timelimit_s": tl,
-        "scoring_profile": profile_tag,
         "alns_deadline_s": effective_alns_deadline_s,
     }
     out_json = os.path.join(out_dir, "_real_out_%s_T%g.json" % (key.replace("/", "_"), tl))
@@ -516,7 +497,6 @@ def run_one_real(path, tl, grace_frac, out_dir, runner_path,
 
         t0 = time.perf_counter()
         env = os.environ.copy()
-        env["OGC_SCORING_PROFILE"] = profile_tag
         env["OGC_ALNS_DEADLINE_S"] = str(effective_alns_deadline_s)
         proc = subprocess.Popen(
             [sys.executable, "-u", runner_path, path, str(tl), PROJECT_ROOT, out_json],
@@ -696,7 +676,7 @@ def build_report(records, planned_total, started, meta, out_dir=None):
         srow("Phase0 preprocess (s)", col("t_phase0_pre"))
         srow("Phase1 assignment (s)", col("t_phase1_asgn"))
         srow("Phase1 timing (s)", col("t_phase1_timing"))
-        srow("Phase2 first place cold NFP (s)", col("t_phase2_place_cold"))
+        srow("Phase2 first place cold (격자 마스크+NFP) (s)", col("t_phase2_place_cold"))
         srow("Construction startup total (s)", startup)
         srow("첫 인증해 시각 t_first_solution (s)", col("t_first_solution_s"), 2)
         srow("ALNS iters/sec", col("alns_iters_per_s"), 2)
@@ -798,7 +778,7 @@ def build_report(records, planned_total, started, meta, out_dir=None):
         L.append("")
         L.append(f"- Phase0 preprocess : **{tot_pre/tot*100:5.1f}%** ({tot_pre:.1f}s)")
         L.append(f"- Phase1 배정+타이밍 : **{tot_asg/tot*100:5.1f}%** ({tot_asg:.1f}s)")
-        L.append(f"- Phase2 첫배치      : **{tot_p2/tot*100:5.1f}%** ({tot_p2:.1f}s)  ← lazy NFP 빌드(문제당 1회)")
+        L.append(f"- Phase2 첫배치      : **{tot_p2/tot*100:5.1f}%** ({tot_p2:.1f}s)  ← 격자 마스크 빌드 + 첫 배치(문제당 1회)")
         L.append("")
         L.append("> 반복 1회 비용은 cold가 아니라 **iter ms**(warm). 해 품질 ∝ **iters/sec**이므로 낮은 문제가 실질 병목.")
         img("phase_dist.png", "phase 시간 분포(크기별)")
@@ -1162,14 +1142,14 @@ def make_plots(records, out_dir):
 
 # ------------------------------------------------------------------ 실행
 
-def _warmup_jit(probs, scoring_profile=None):
+def _warmup_jit(probs):
     for p in probs:
         try:
             with open(p, "r", encoding="utf-8") as f:
                 prob = json.load(f)
             pre = preprocess(prob)
             p1 = BuildBayAssignment(prob, pre, None)
-            realize(list(p1.bay), prob, pre, _phase2_cfg_for_report(scoring_profile))
+            realize(list(p1.bay), prob, pre, _phase2_cfg_for_report())
             return
         except Exception:
             continue
@@ -1192,8 +1172,6 @@ def parse_args():
     ap.add_argument("--max-probs", type=int, default=None)
     ap.add_argument("--smoke", action="store_true",
                     help="빠른 연기시험: 2문제, horizon 10s, 프로파일 생략, 데이터 없으면 example 폴더 사용")
-    ap.add_argument("--scoring-profile", default=None,
-                    help="Phase2 scoring profile override for report runs")
     ap.add_argument("--alns-deadline-s", type=float, default=None,
                     help="ALNS deadline override for report runs")
     ap.add_argument("--tag", default="", help="보고서 파일명 접미사")
@@ -1239,7 +1217,6 @@ def main():
     if args.horizon is None:
         args.horizon = DEFAULT_HORIZON
     horizon = float(args.horizon)
-    report_scoring_profile = _resolve_report_scoring_profile(args.scoring_profile)
     anytime_alns_deadline_s = _resolve_report_alns_deadline_s(args.alns_deadline_s, horizon)
     checkpoints = sorted({float(x) for x in args.checkpoints.split(",") if x.strip()} | {horizon})
     timelimits = [float(x) for x in args.timelimits.split(",") if x.strip()]
@@ -1269,7 +1246,7 @@ def main():
     tasks = []
     if args.mode in ("anytime", "both"):
         for p in probs:
-            rk = _report_run_key("anytime", prob_key(p), horizon, report_scoring_profile, anytime_alns_deadline_s)
+            rk = _report_run_key("anytime", prob_key(p), horizon, anytime_alns_deadline_s)
             if rk not in done:
                 tasks.append(("anytime", p, None, rk))
     if args.mode in ("real", "both"):
@@ -1279,7 +1256,6 @@ def main():
                     "real",
                     prob_key(p),
                     tl,
-                    report_scoring_profile,
                     _resolve_report_alns_deadline_s(args.alns_deadline_s, tl),
                 )
                 if rk not in done:
@@ -1288,7 +1264,7 @@ def main():
 
     meta = (f"mode={args.mode} · anytime horizon={horizon:g}s(member0 단일 ALNS, 시계=load+preprocess+alns, 진단 제외) · "
             f"real timelimits={timelimits} grace={args.grace_frac:g} · "
-            f"scoring_profile={args.scoring_profile or DEFAULT_SCORING_PROFILE} · "
+            f"construction=격자 스캔+시간순 투입 · "
             f"체크포인트={['%g' % c for c in checkpoints]}")
     started = _now()
     log(f"START probs={len(probs)} tasks={len(tasks)} resume={len(done)} out={out_dir}")
@@ -1300,7 +1276,7 @@ def main():
 
     if any(t[0] == "anytime" for t in tasks):
         log("numba JIT warmup...")
-        _warmup_jit(probs, report_scoring_profile)
+        _warmup_jit(probs)
         log("warmup done.")
 
     for kind, path, tl, rk in tasks:
@@ -1308,7 +1284,6 @@ def main():
             rec = run_one_anytime(
                 path, horizon, checkpoints,
                 do_profile=not args.smoke,
-                scoring_profile=report_scoring_profile,
                 alns_deadline_s=args.alns_deadline_s,
             )
         else:
@@ -1318,7 +1293,6 @@ def main():
                 args.grace_frac,
                 out_dir,
                 runner_path,
-                report_scoring_profile,
                 args.alns_deadline_s,
             )
         fsync_append(jsonl_path, json.dumps(rec, ensure_ascii=False))
