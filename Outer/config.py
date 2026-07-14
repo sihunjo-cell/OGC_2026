@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -26,8 +26,9 @@ class OuterConfig:
 
     # Z1 인지 혼잡 페널티: repair는 지연(Z1, Phase 2에서만 드러남)을 못 보므로
     # 과밀·강제 배정을 피하도록 유도한다. 0이면 Z1 무시 기준선.
-    crowd_weight: float = 1.0
-    crowd_eta: float = 0.85            # 용량 비율(Phase 1 eta와 동일)
+    # 6.0 = both-mode(greedy+repair) cw 그리드서치 최적(2026-07-15, 병목 4문제).
+    crowd_weight: float = 6.0
+    crowd_eta: float = 0.85            # 용량 비율(Phase 1 eta와 동일). over=peak-eta*WH hinge
 
     # -- O.3 적응적 가중치 AOS ------------------------------------------------
     r: float = 0.1                                   # 반응 계수

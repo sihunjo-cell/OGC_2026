@@ -1,7 +1,0 @@
-[2026-07-12T00:11:34] CMD C:\Users\82103\AppData\Local\Python\pythoncore-3.14-64\python.exe -u C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\perf_report.py --scoring-profile forced_risk_20 --alns-deadline-s 5 --out C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\sweep_smoke\runs\20260712_001134_forced_risk_20_d5_r1
-Traceback (most recent call last):
-  File "C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\perf_report.py", line 69, in <module>
-    import utils
-  File "C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\ogc2026\baseline\utils.py", line 104, in <module>
-    from shapely.geometry import Polygon as ShapelyPolygon
-ModuleNotFoundError: No module named 'shapely'

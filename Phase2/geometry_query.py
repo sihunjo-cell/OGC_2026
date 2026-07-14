@@ -292,11 +292,6 @@ def centroid_of_bbox(bb: tuple) -> tuple:
     return ((bb[0] + bb[2]) * 0.5, (bb[1] + bb[3]) * 0.5)
 
 
-def bay_center(prob_info, j: int) -> tuple:
-    b = prob_info["bays"][j]
-    return (b["width"] * 0.5, b["height"] * 0.5)
-
-
 def bay_diagonal(prob_info, j: int) -> float:
     b = prob_info["bays"][j]
     return math.hypot(b["width"], b["height"])

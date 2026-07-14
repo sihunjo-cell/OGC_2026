@@ -13,6 +13,12 @@ class Phase2Config:
     dispatch_cand_cap: int = 12     # (bay, orient)당 정확 게이트에 넘길 셀 수
     dispatch_cand_cap_hi: int = 48  # 큐가 밀리면 확대 ("12셀 절벽" 수정)
     dispatch_queue_hi: int = 20     # 확대 발동 큐 길이
+    scan_incremental: bool = True   # 스캔 지도 공간 국소 무효화(끄면 작업장 통째 재계산)
+    # admission 조기중단: 마지막 admit 후 F회 연속 실패면 남은 큐를 다음 이벤트로 이월.
+    # 0 = 끔. 스캔비용의 76~81%가 마지막 admit 이후에 소모되는 꼬리를 자른다.
+    dispatch_admit_fail_stop: int = 0
+    # 마스크 캐시를 pre에 공유해 설계도(Raster 인스턴스) 간 재사용(비트동일).
+    mask_cache_share: bool = True
 
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2
