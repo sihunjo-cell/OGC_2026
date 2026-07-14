@@ -1,19 +1,10 @@
 # Phase2/raster.py
-"""Phase2.raster -- v12-계열 라스터 기하 엔진 (ALGORITHM_PLAYBOOK §3.3 이식).
+"""Phase2.raster -- 라스터 기하 엔진: 블록의 배치가능 정수 앵커를 전수 스캔.
 
-soundness 계약(플레이북 §3.1): 마스크는 각 layer 볼록껍질(convex hull)의
-superset(닫힌 단위 정사각형을 touch하면 1). 정확 게이트의 NFP는 convex_decompose
-조각들의 Minkowski 합으로 만들어져 오목 블록을 볼록껍질 수준까지 보수적으로 본다
-(geom_mode="fast"에서 조각 합=hull 면적인 블록이 실재: 오목 노치를 채워서 폴리곤은
-disjoint여도 hull이 겹치면 NFP가 충돌로 친다). 마스크를 폴리곤이 아니라 hull의
-superset으로 두어야 [마스크 disjoint ⇒ 두 hull이 면적>0로 안 겹침 ⇒ (dx,dy)가
-NFP 내부 아님, 변 접촉은 충돌 아님 ⇒ 정확 게이트 통과]가 증명된다. 그래서 scan이
-feasible이라 한 앵커는 '현재 상주 대비 공간충돌 없음 + 크레인 진입(j>=k) 가능'이
-참이다. 반대 방향(마스크는 겹치지만 실제론 합법)은 후보 하나 손해로만 나타난다.
-시간축(내 EXIT 차단·역방향 차단)은 라스터가 증명하지 못하므로 호출자가 정확
-게이트(crane_obstructed / crane_blocks_resident)를 통과시켜야 한다.
-
-shapely는 마스크 빌드에서 층당 1회만 호출한다(hot loop 진입 금지)."""
+soundness: 마스크는 각 layer convex hull의 superset(단위칸 touch=1). 마스크 disjoint
+⇒ hull 면적 겹침 없음 ⇒ 폴리곤 겹침 없음(변 접촉=합법) ⇒ 공간충돌 없음 + 크레인
+진입(j>=k) 가능이 증명된다. 시간축(내 EXIT·역방향 차단)은 라스터가 증명 못 하므로
+호출자가 정확 게이트(crane)를 통과시켜야 한다. shapely는 마스크 빌드 때 층당 1회만."""
 
 from __future__ import annotations
 
@@ -74,10 +65,9 @@ class Raster:
         boxes = shapely.box(mx0 + cs.ravel(), my0 + rs.ravel(),
                             mx0 + cs.ravel() + 1.0, my0 + rs.ravel() + 1.0)
         for k, ring in enumerate(layers):
-            # 볼록껍질을 rasterize: 정확 게이트 NFP가 convex_decompose(껍질 이하)
-            # 기반이라 마스크는 hull의 superset이어야 [disjoint ⇒ NFP-clear]가
-            # 성립한다(오목 폴리곤만 쓰면 노치에서 위반). hull은 bbox가 같아
-            # mx0/my0/MH/MW 불변, IFP/stamp 정렬 그대로.
+            # hull을 rasterize: 정확 게이트 NFP가 convex_decompose(껍질 이하) 기반이라
+            # 마스크는 hull의 superset이어야 [disjoint ⇒ NFP-clear]가 성립(오목만 쓰면
+            # 노치에서 위반). hull은 bbox가 같아 mx0/my0/MH/MW·IFP·stamp 정렬 불변.
             hull = Polygon(ring).convex_hull
             hit = shapely.intersects(hull, boxes)   # 경계 touch 포함 => superset
             mask[k] = hit.reshape(MH, MW).astype(np.uint8)
@@ -141,10 +131,8 @@ class Raster:
     # -- 전수 위치 스캔 ----------------------------------------------------------
 
     def _affected_region(self, j, v0, v1, MH, MW, R, C):
-        """v0 이후 ~ v1 까지의 스탬프가 (MH, MW) 블록의 어떤 앵커 feas를 바꿀 수
-        있는지. 반환 (ar0, ar1, ac0, ac1) 반열린 앵커 범위 또는 None(안 바뀜).
-        변경영역 사각형들의 합집합 D 를 구하고, 앵커 (r,c)의 윈도
-        [r, r+MH) x [c, c+MW) 가 D 와 겹칠 수 있는 앵커 범위로 역산한다."""
+        """v0~v1 스탬프가 바꿀 수 있는 (MH, MW) 블록의 앵커 범위 (ar0, ar1, ac0, ac1)
+        반열린, 안 바뀌면 None. 변경영역 합집합과 겹치는 앵커 윈도로 역산."""
         dirty = self._dirty[j]
         if v1 > len(dirty):          # 로그가 v1을 못 덮음(이론상 없음) -> 전체 재계산 신호
             return (0, R, 0, C)
@@ -176,13 +164,11 @@ class Raster:
     def scan(self, j: int, i: int, o: int):
         """bay j에서 (i, o)의 모든 정수 앵커 feasibility.
 
-        반환 (feas (R, C) bool, mx0, my0): feas[r, c] True <=> 위치
-        (x, y) = (c - mx0, r - my0)에 놓았을 때 마스크가 점유 suffix-union
-        (union_ge)과 disjoint (= 공간충돌 없음 + 크레인 진입 j>=k 가능). 마스크는
-        층별 hull superset이라 disjoint ⇒ 폴리곤 면적>0 겹침 없음(변 접촉=합법)이
-        증명된다. 호출자가 IFP로 클립해야 컨테인먼트가 보장된다. 증분 모드에서는
-        변경영역이 안 겹치면 캐시 그대로, 겹치면 그 앵커 범위만 다시 계산한다
-        (전체 재계산과 비트 동일)."""
+        반환 (feas (R, C) bool, mx0, my0): feas[r, c] <=> 위치 (c-mx0, r-my0)의
+        마스크가 점유 suffix-union(union_ge)과 disjoint (= 공간충돌 없음 + 크레인
+        진입 j>=k 가능; hull superset이라 변 접촉만 남고 면적 겹침은 없음). 호출자가
+        IFP로 클립해야 컨테인먼트 보장. 증분 모드: 변경영역과 안 겹치면 캐시, 겹치면
+        그 앵커 범위만 재계산(전체 재계산과 비트 동일)."""
         per_bay = self._scan.setdefault(j, {})
         cached = per_bay.get((i, o))
         v1 = self.ver[j]

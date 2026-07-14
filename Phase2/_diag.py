@@ -1,21 +1,10 @@
 # Phase2/_diag.py
-"""헛측량(wasted re-scan) 원인 계측 프로브.
+"""헛측량(wasted re-scan) 원인 계측 프로브. OGC_DIAG=1 일 때만 활성(그 외엔 무부하).
 
-OGC_DIAG=1 일 때만 활성(그 외엔 모든 훅이 첫 속성조회 후 즉시 반환 = 무부하).
-raster.scan / raster._stamp / dispatch._try_admit 에 최소 훅으로 부착해서,
-'스캔이 다시 계산됐는데 이번엔 블록이 안 들어간' 사건을 원인별로 분해한다.
-
-분해 축 1 -- 재계산(캐시 미스)의 *원인* (직전 무효화 스탬프 기준):
-  cold        : 이 (i,o)를 이 bay에서 처음 스캔
-  intra_add   : 같은 tick 안 admission add 가 ver를 올려 무효화  <- 캐스케이드 가설
-  intra_exit  : 같은 tick 시작부 EXIT 제거가 무효화
-  inter_tick  : 이전 tick(들)의 상태변화로 무효화 (시간이 진짜로 흐름)
-
-분해 축 2 -- 그 스캔을 유발한 블록의 이벤트 결과:
-  admitted    : 이번에 배치됨 (헛측량 아님)
-  no_space    : 모든 방향에서 IFP∩feasible 앵커 0 (공간 없음, ~4.3% 가설)
-  gate_fail   : 공간은 있으나 모든 후보셀이 크레인/시간축 정확게이트 탈락
-
+raster.scan / raster._stamp / dispatch._try_admit 에 훅을 걸어 '스캔이 재계산됐는데
+블록은 안 들어간' 사건을 두 축으로 분해한다.
+  축1 재계산 원인: cold(첫 스캔) / intra_add / intra_exit(같은 tick) / inter_tick.
+  축2 이벤트 결과: admitted(헛측량 아님) / no_space(앵커 0) / gate_fail(게이트 탈락).
 cost = einsum FLOP 프록시 = Σ_{활성층 k} R*C*MH*MW. 비용가중 귀속에 사용."""
 
 from __future__ import annotations
@@ -62,7 +51,7 @@ class _Probe:
         self.diff = {"recompute": 0, "identical": 0,
                      "changed_cells": 0, "total_cells": 0}
         self.diff_hist = defaultdict(int)     # 바뀐 칸 비율 버킷 -> 재계산 수
-        # 작업장 통째로 다시 만드는 캐시들(점유 합집합/팽창/접촉장) 재빌드 비용
+        # 작업장 통째로 다시 만드는 캐시들(점유 합집합/접촉장) 재빌드 비용
         self.wholebay = defaultdict(lambda: {"count": 0, "cost": 0.0})
         # 스탬프 하나가 실제로 더럽히는 영역(블록 발자국) vs 작업장 넓이
         self.foot = {"n": 0, "foot_sum": 0, "bay_sum": 0}
@@ -149,7 +138,7 @@ class _Probe:
             b = "50-100%"
         self.diff_hist[b] += 1
 
-    # -- 작업장 통째 캐시 재빌드 (raster.union_ge/_touch/contact_field 훅) --
+    # -- 작업장 통째 캐시 재빌드 (raster.union_ge/contact_field 훅) --
     def on_wholebay(self, kind, cost):
         if not self.enabled:
             return

@@ -1,8 +1,5 @@
-"""Phase0.preprocess -- 오케스트레이터.
-
-배치와 무관한 전처리(0.1 상수 + 0.2 지오메트리)를 돌려서 Phase 1용 PRE 객체로
-묶음. 0.3(clique)은 Phase 1의 ENTRY/EXIT/bay가 필요해서 PRE.cliques(...)로 미룸.
-"""
+"""Phase0.preprocess -- 오케스트레이터: 0.1 상수 + 0.2 지오메트리를 PRE 번들로 묶음.
+0.3(clique)은 Phase 1의 ENTRY/EXIT/bay가 필요해 PRE.cliques(...)로 미룸."""
 
 from __future__ import annotations
 

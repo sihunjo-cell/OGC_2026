@@ -4,11 +4,8 @@ from __future__ import annotations
 
 
 def precompute_constants(prob_info: dict) -> dict:
-    """스칼라 상수(0.1). 모든 리스트는 0-based block / bay id로 인덱싱.
-
-    반환 dict: u(bay 면적 가중치 Abar/(W*H)), Abar(평균 bay 면적),
-    Smax(최대 bay 선호), EST(release), LST0(due - proc), slack.
-    """
+    """배치와 무관한 스칼라 상수(0.1). 리스트는 0-based block/bay id로 인덱싱.
+    반환: u, Abar, Smax, EST(release), LST0(due-proc), slack."""
     bays = prob_info["bays"]
     blocks = prob_info["blocks"]
     m = len(bays)

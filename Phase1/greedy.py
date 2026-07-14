@@ -1,9 +1,7 @@
-"""
-Phase1.greedy -- FirstFit_Greedy bay 배정.
+"""Phase1.greedy -- FirstFit greedy bay 배정.
 
-블록을 EDD 순서(slack 오름차순, due 오름차순)로 훑어, eligible하고 DFF도
-통과하는 bay 중 alpha_h*w2*Z2_증가분 + beta_h*w3*(Smax_i - S_ij)를 최소화하는
-곳에 배정한다. bay[i] 반환.
+블록을 EDD 순(slack↑, due↑)으로, eligible + DFF 통과 bay 중 점수
+(w2·Z2증가 + w3·선호 + 혼잡 페널티)를 최소화하는 곳에 배정. bay[i] 반환.
 """
 
 from __future__ import annotations
@@ -42,6 +40,28 @@ def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
     w2 = weights.get("w2", 1.0)
     w3 = weights.get("w3", 1.0)
 
+    w1 = weights.get("w1", 1.0)
+    cw = float(getattr(cfg, "crowd_weight", 0.0) or 0.0)
+    areas = [common.footprint_area(pre, i) for i in range(n)]
+    bay_wh = [bays[j]["width"] * bays[j]["height"] for j in range(m)]
+    prof = [[] for _ in range(m)]
+
+    def _crowd(i, j):
+        if cw <= 0.0:
+            return 0.0
+        WH = bay_wh[j]
+        ei, xi, ai = EST[i], exit0[i], areas[i]
+        times = [ei] + [a for (a, e, ar) in prof[j] if ei <= a < xi]
+        peak = 0.0
+        for t in times:
+            s = ai
+            for (a, e, ar) in prof[j]:
+                if a <= t < e:
+                    s += ar
+            if s > peak:
+                peak = s
+        return cw * w1 * peak / WH
+
     order = sorted(range(n), key=lambda i: (pre.slack[i], blocks[i]["due_date"]))
 
     load = [0.0] * m
@@ -71,11 +91,13 @@ def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
             trial[j] += L[i]
             z2_after = _max_imbalance(trial, u)
             return (cfg.alpha_h * w2 * z2_after
-                    + cfg.beta_h * w3 * (Smax[i] - S[i][j]))
+                    + cfg.beta_h * w3 * (Smax[i] - S[i][j])
+                    + _crowd(i, j))
 
         j_star = min(cand, key=_score)
         bay[i] = j_star
         load[j_star] += L[i]
         assigned[j_star].append(i)
+        prof[j_star].append((EST[i], exit0[i], areas[i]))
 
     return bay

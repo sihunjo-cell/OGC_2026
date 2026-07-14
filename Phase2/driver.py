@@ -1,10 +1,7 @@
-"""Phase2.driver -- PlaceAndCrane.
+"""Phase2.driver -- PlaceAndCrane: dispatch 배치 후 크레인 인증 + repair 파이프라인.
 
-이벤트 구동 ATC 디스패처(dispatch_construct)가 bay 배정(Phase 1 고정)은 그대로
-두고 ENTRY/EXIT 타이밍과 (x, y, orient) 배치를 시간순으로 결정한다. 이후:
-크레인 인증(공식 utils) -> Phase A(충돌 블록 하루씩 미룸) -> Phase B(부분점유 슬롯
-재시도 후 빈 bay window force_place). force_place는 구조적으로 항상 feasible하므로
-출력은 언제나 완전한 feasible 레이아웃이다."""
+dispatch_construct(배치) -> 크레인 인증(공식 utils) -> Phase A(충돌 블록 하루씩 미룸)
+-> Phase B(부분점유 슬롯 재시도 후 빈 bay force_place). 출력은 항상 완전한 feasible."""
 
 from __future__ import annotations
 

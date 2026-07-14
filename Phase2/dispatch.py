@@ -1,14 +1,10 @@
 # Phase2/dispatch.py
-"""Phase2.dispatch -- 이벤트 구동 ATC 디스패처 (플레이북 §3.4 "the pump" 이식).
+"""Phase2.dispatch -- 이벤트 구동 ATC 디스패처("the pump").
 
-Phase 1이 확정한 bay 배정(Z2/Z3 불변)은 그대로 두고, ENTRY/EXIT 타이밍과 배치
-(x, y, o)만 시간 순서로 다시 결정한다. 이벤트(모든 release + 예정 exit)마다:
-  ① t의 exit를 라스터에서 제거  ② release 블록을 큐에  ③ ATC 우선순위로 admission.
-배치 후보 = raster.scan 전수 앵커 -> IFP 클립 -> 접촉점수 상위 cap개 -> 시간축
-정확 게이트(내 EXIT 차단 + 역방향 차단; 공간충돌·진입차단은 scan이 이미 증명).
-같은 tick은 EXIT 먼저 처리(핸드오프 합법, build_solution 정렬과 일치). 동시각
-tie-break(id 규칙)는 미러하지 않고 보수적으로 처리 -- infeasible 위험 0, 품질만
-소폭 손해. 미배치 잔여는 force_place로 완결(출력은 항상 완전한 배정)."""
+bay 배정(Z2/Z3)은 고정하고 ENTRY/EXIT 타이밍과 (x,y,o) 배치만 시간순으로 결정.
+이벤트(release + 예정 exit)마다: ① exit 제거 ② release 큐잉 ③ ATC 우선순위 admission
+(raster.scan 앵커 → IFP 클립 → 접촉순 셀 → 시간축 정확 게이트). 같은 tick은 EXIT
+먼저(핸드오프). 미배치 잔여는 force_place로 완결(출력은 항상 완전한 feasible 배정)."""
 
 from __future__ import annotations
 
@@ -161,8 +157,6 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                 else:
                     _fails += 1
                     # 마지막 admit 이후 F회 연속 실패 -> 남은 큐는 다음 이벤트로 이월.
-                    # 계측상 스캔비용의 76~81%가 마지막 admit 이후에 소모되므로
-                    # 그 꼬리를 잘라 스캔 호출을 줄인다(품질은 지연으로 소폭 손해 가능).
                     if fail_stop and _fails >= fail_stop:
                         break
 

@@ -1,9 +1,6 @@
 """Phase0.geometry -- 0.2용 저수준 지오메트리 커널: 면적, bbox, Douglas-Peucker,
-볼록 분할, 볼록 Minkowski 합, No-Fit-Polygon(NFP) 생성.
-
-shapely는 지오메트리 생성(1회)에만 사용. NFP는 순수 정점 ring으로 반환해서
-Phase 2 hot loop은 shapely를 안 거침.
-"""
+볼록 분할, Minkowski 합, No-Fit-Polygon(NFP) 생성.
+shapely는 생성(1회)에만 사용. NFP는 순수 정점 ring으로 반환해 hot loop은 shapely 배제."""
 
 from __future__ import annotations
 
@@ -16,14 +13,13 @@ from shapely.ops import unary_union as _unary_union, triangulate as _triangulate
 
 from .config import EPS
 
-# Minkowski hull 커널용 numba 가속(선택). 없으면 순수 파이썬 monotone chain으로
-# 폴백하며 결과는 bit-identical.
+# Minkowski hull 커널용 numba 가속(선택). 없으면 순수 파이썬으로 폴백(bit-identical).
 try:
     from numba import njit as _njit
     _HAVE_NUMBA = True
 except Exception:                        # pragma: no cover
     _HAVE_NUMBA = False
-    def _njit(*a, **k):                   # 데코레이터 no-op. 이 경우 커널은 호출 안 됨
+    def _njit(*a, **k):                   # no-op 데코레이터 (이 경우 커널 미호출)
         def _wrap(f):
             return f
         return _wrap
@@ -90,11 +86,8 @@ def _dp_open(pts: list, tol: float) -> list:
 
 
 def _douglas_peucker_closed(pts: list, tol: float) -> list:
-    """닫힌 ring용 Douglas-Peucker (정점 중복 없음).
-
-    pts[0]과 가장 먼 정점에서 둘로 나눠 각각 열린 폴리라인으로 단순화.
-    pts[0]은 항상 보존해서 layer 0의 기준점 (0, 0)을 유지.
-    """
+    """닫힌 ring용 Douglas-Peucker. pts[0]과 최원 정점에서 둘로 나눠 단순화.
+    pts[0]은 항상 보존(layer 0의 기준점 (0,0) 유지)."""
     n = len(pts)
     if n <= 3:
         return list(pts)
@@ -108,11 +101,8 @@ def _douglas_peucker_closed(pts: list, tol: float) -> list:
 
 
 def simplify_layer(pts: list, tol: float) -> list:
-    """한 layer의 정점 ring을 (x, y) 튜플 리스트로 단순화.
-
-    tol <= 0이면 원본 정점 유지(안전 기본값). 삼각형 밑으로는 절대 안 줄이고,
-    첫 정점(layer 0의 기준점)은 항상 보존.
-    """
+    """한 layer의 정점 ring을 (x,y) 튜플 리스트로 단순화.
+    tol <= 0이면 원본 유지. 삼각형 밑으로 안 줄이고 첫 정점은 항상 보존."""
     ring = [(float(v[0]), float(v[1])) for v in pts]
     if tol <= 0.0 or len(ring) <= 3:
         return ring
@@ -141,10 +131,7 @@ def _shapely_polygon(pts: list) -> Optional[_ShapelyPolygon]:
 
 def _convex_partition(pts: list) -> list:
     """단순 폴리곤을 shapely triangulation으로 볼록 조각들로 분할.
-
-    대표점이 폴리곤 내부에 있는 삼각형만 유지(오목부를 가로지르는 건 버림).
-    볼록 정점 ring 반환. triangulation이 쓸 게 없으면 convex hull로 폴백.
-    """
+    대표점이 내부인 삼각형만 유지(오목부 가로지르는 건 버림). 없으면 convex hull 폴백."""
     poly = _shapely_polygon(pts)
     if poly is None:
         return []
@@ -174,8 +161,8 @@ def _minkowski_convex(P: list, Q: list) -> Optional[_ShapelyPolygon]:
 
 
 def geom_to_rings(geom) -> list:
-    """shapely Polygon/MultiPolygon/GeometryCollection을 순수 정점 ring으로 변환:
-    [{"ext": [(x,y),...], "holes": [[(x,y),...], ...]}, ...] (shapely 비의존)."""
+    """shapely geom을 순수 정점 ring 리스트로 변환:
+    [{"ext": [(x,y),...], "holes": [[...], ...]}, ...]."""
     rings = []
 
     def _add(poly):
@@ -196,11 +183,8 @@ def geom_to_rings(geom) -> list:
 
 
 def nfp_rings(A_pts: list, B_pts: list) -> list:
-    """NFP(A, B) = A (+) (-B)를 순수 정점 ring으로 (SHAPELY 레퍼런스 경로).
-
-    양쪽을 볼록 분할한 뒤 조각끼리 쌍으로 합하고 union:
-    (U A_i) (+) (U -B_j) = U_{i,j} (A_i (+) -B_j).
-    """
+    """NFP(A,B) = A (+) (-B) 순수 정점 ring (SHAPELY 레퍼런스 경로).
+    양쪽 볼록 분할 후 조각끼리 쌍합하고 union."""
     if not A_pts or not B_pts:
         return []
     negB = [(-x, -y) for (x, y) in B_pts]
@@ -273,9 +257,8 @@ def _monotone_chain(pts: list) -> list:
 
 @_njit(cache=True)
 def _mink_kernel(P, Q):                   # pragma: no cover (njit)
-    """볼록 Minkowski hull을 njit 하나로 처리 (쌍합 -> 정렬 -> dedup -> monotone
-    chain). _monotone_chain의 float 연산을 그대로 따라해서 hull이 순수 파이썬
-    경로와 bit-identical."""
+    """볼록 Minkowski hull을 njit 하나로 (쌍합 -> 정렬 -> dedup -> monotone chain).
+    _monotone_chain의 float 연산을 그대로 따라 해 순수 파이썬 경로와 bit-identical."""
     nP = P.shape[0]
     nQ = Q.shape[0]
     N = nP * nQ
@@ -328,8 +311,7 @@ def _mink_kernel(P, Q):                   # pragma: no cover (njit)
 
 def _minkowski_convex_pure(P: list, Q: list) -> list:
     """두 볼록 폴리곤의 Minkowski 합 = 정점 쌍합의 convex hull.
-    numba 있으면 njit 커널 사용(bit-identical), 없으면 순수 파이썬 monotone
-    chain. 커널 실패 시 순수 파이썬으로 폴백."""
+    numba 있으면 njit 커널(bit-identical), 없거나 실패 시 순수 파이썬 폴백."""
     if _HAVE_NUMBA and P and Q:
         try:
             arr = _mink_kernel(_np.asarray(P, _np.float64), _np.asarray(Q, _np.float64))
@@ -377,9 +359,8 @@ def _merge_along_edge(A: list, B: list, ia: int, jv: int) -> list:
 
 
 def _hertel_mehlhorn(pieces: list) -> list:
-    """triangulation을 더 적은 볼록 조각으로 병합(Hertel-Mehlhorn): 두 이웃의
-    union이 볼록으로 유지되면 공유 대각선을 없앰. 면적 보존이라 NFP union은
-    그대로."""
+    """Hertel-Mehlhorn: 두 이웃의 union이 볼록이면 공유 대각선을 없애 조각 수를 줄임.
+    면적 보존이라 NFP union은 불변."""
     pieces = [list(p) for p in pieces]
     changed = True
     while changed:
@@ -391,8 +372,7 @@ def _hertel_mehlhorn(pieces: list) -> list:
                 if se is None:
                     continue
                 merged = _merge_along_edge(pieces[a], pieces[b], se[0], se[1])
-                # 볼록 AND 면적 보존일 때만 채택. 면적 검사가 잘못된/자기교차
-                # ring을 만든 병합을 걸러냄.
+                # 볼록 AND 면적 보존일 때만 채택 (자기교차 병합을 면적 검사로 걸러냄)
                 if len(merged) >= 3 and _is_convex(merged):
                     am = polygon_area(merged)
                     if abs(am - polygon_area(pieces[a]) - polygon_area(pieces[b])) <= 1e-6 * max(1.0, am):
@@ -406,11 +386,8 @@ def _hertel_mehlhorn(pieces: list) -> list:
 
 
 def convex_decompose(pts: list) -> list:
-    """단순 폴리곤을 볼록 정점 ring 리스트로 볼록 분할.
-
-    볼록 입력은 조각 하나로 반환. 비볼록 입력은 triangulation(shapely) 후
-    Hertel-Mehlhorn으로 최소 개수의 볼록 조각으로 병합.
-    """
+    """단순 폴리곤을 볼록 정점 ring 리스트로 분할.
+    볼록이면 조각 하나. 비볼록이면 triangulation 후 Hertel-Mehlhorn으로 병합."""
     if pts is None or len(pts) < 3:
         return []
     if _is_convex(pts):
@@ -422,22 +399,18 @@ def convex_decompose(pts: list) -> list:
 
 
 def nfp_rings_hybrid(A_parts: list, B_parts: list) -> list:
-    """순수 파이썬 Minkowski + shapely union으로 NFP ring 생성 (HYBRID 경로).
-
-    nfp_rings()와 bit-identical한 ring을 만들되 비싼 shapely MultiPoint
-    Minkowski는 건너뜀. union은 여전히 shapely라 ring 정점은 정확.
-    """
+    """순수 파이썬 Minkowski + shapely union으로 NFP ring 생성 (FAST 경로).
+    nfp_rings()와 bit-identical하되 비싼 shapely Minkowski는 건너뜀."""
     if not A_parts or not B_parts:
         return []
 
-    # 볼록 x 볼록 (각각 조각 1개): NFP가 볼록 폴리곤 하나라 union 불필요 --
-    # Minkowski hull을 바로 반환 (shapely 없이 정확).
+    # 볼록 x 볼록 (조각 1개씩): NFP가 볼록 하나라 union 불필요 -- hull 바로 반환.
     if len(A_parts) == 1 and len(B_parts) == 1:
         b_neg = [(-x, -y) for (x, y) in B_parts[0]]
         hull = _minkowski_convex_pure(A_parts[0], b_neg)
         return [{"ext": hull, "holes": []}] if len(hull) >= 3 else []
 
-    # 여러 조각 (비볼록 layer): 순수 파이썬 Minkowski 조각들 만든 뒤 shapely union.
+    # 여러 조각 (비볼록 layer): 순수 파이썬 Minkowski 조각 만든 뒤 shapely union.
     polys = []
     for a in A_parts:
         for b in B_parts:
@@ -460,11 +433,8 @@ def nfp_rings_hybrid(A_parts: list, B_parts: list) -> list:
 
 
 def nfp_pieces(A_parts: list, B_parts: list) -> list:
-    """NFP를 union 없는 볼록 조각으로 (FAST 경로, shapely 없음).
-
-    각 조각은 구멍 없는 볼록 ring. 점이 NFP 안에 있다 <=> 어떤 조각 안에 있다
-    (p in U C_i <=> exists i: p in C_i).
-    """
+    """NFP를 union 없는 볼록 조각으로 (PIECES 경로, shapely 없음).
+    각 조각은 구멍 없는 볼록 ring. p in U C_i <=> exists i: p in C_i."""
     if not A_parts or not B_parts:
         return []
     rings = []
