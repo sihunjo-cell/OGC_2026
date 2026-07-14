@@ -19,6 +19,7 @@ import time
 import numpy as np
 
 from . import repair as rp
+from ._diag import PROBE
 from .crane import crane_blocks_resident, crane_obstructed
 from .raster import Raster
 
@@ -32,7 +33,10 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     R = [b["release_time"] for b in blocks]
     bay = list(p1_out.bay)
 
-    raster = Raster(prob_info, pre)
+    raster = Raster(prob_info, pre,
+                    incremental=bool(getattr(cfg, "scan_incremental", True)),
+                    mask_share=bool(getattr(cfg, "mask_cache_share", False)))
+    fail_stop = int(getattr(cfg, "dispatch_admit_fail_stop", 0) or 0)
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
     abar = (sum(amin) / n) if n else 1.0
@@ -67,10 +71,12 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             return False
         return True
 
-    def _try_admit(i, j, t):
+    def _try_admit(i, j, t, rank=0, earlier=0):
         xt = t + P[i]
         cap = (cfg.dispatch_cand_cap_hi if len(queue[j]) >= cfg.dispatch_queue_hi
                else cfg.dispatch_cand_cap)
+        any_space = False          # 진단: 어떤 방향이라도 IFP∩feasible 앵커>0 였나
+        feas_anchors = cells_tried = gate_rej = 0
         for o in range(len(pre.poly[i])):
             (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
             if x_lo > x_hi or y_lo > y_hi:
@@ -84,7 +90,12 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             if r_lo > r_hi or c_lo > c_hi:
                 continue
             allow[r_lo:r_hi + 1, c_lo:c_hi + 1] = feas[r_lo:r_hi + 1, c_lo:c_hi + 1]
+            n_ok = int(allow.sum())
+            if n_ok:
+                any_space = True
+                feas_anchors += n_ok
             for (r, c) in raster.order_cells(j, i, o, allow, cap):
+                cells_tried += 1
                 pos = (int(c) - mx0, int(r) - my0)
                 if _exact_gate(i, j, o, pos, xt):
                     coords[i] = pos
@@ -93,7 +104,13 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     exit_[i] = xt
                     raster.add(j, i, o, pos)
                     placed[j].append(i)
+                    PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
+                                     feas_anchors, cells_tried, gate_rej)
                     return True
+                gate_rej += 1
+        PROBE.on_attempt(t, j, i, rank, earlier,
+                         "gate_fail" if any_space else "no_space",
+                         feas_anchors, cells_tried, gate_rej)
         return False
 
     # -- 이벤트 루프 -----------------------------------------------------------
@@ -106,6 +123,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     while ev:
         t = heapq.heappop(ev)
         in_ev.discard(t)
+        PROBE.set_ctx(t, "exit")
         # ① t까지의 exit 반영 (같은 tick EXIT-먼저 = 핸드오프 슬롯 사용)
         for j in range(pre.n_bays):
             keep = []
@@ -123,18 +141,30 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         if deadline is not None and time.perf_counter() >= deadline:
             break
         # ③ ATC 순서 admission (결정론: 동점은 낮은 id)
+        PROBE.set_ctx(t, "admit")
         for j in range(pre.n_bays):
             if not queue[j]:
                 continue
-            for i in sorted(queue[j], key=lambda b: (-_prio(b, t), b)):
+            _earlier = 0     # 진단: 같은 tick·bay 에서 앞서 admit 된 수 (캐스케이드 깊이)
+            _fails = 0       # 마지막 admit 이후 연속 실패 수 (조기중단 카운터)
+            for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
-                if _try_admit(i, j, t):
+                if _try_admit(i, j, t, _rank, _earlier):
+                    _earlier += 1
+                    _fails = 0
                     queue[j].remove(i)
                     x = int(exit_[i])
                     if x not in in_ev:
                         heapq.heappush(ev, x)
                         in_ev.add(x)
+                else:
+                    _fails += 1
+                    # 마지막 admit 이후 F회 연속 실패 -> 남은 큐는 다음 이벤트로 이월.
+                    # 계측상 스캔비용의 76~81%가 마지막 admit 이후에 소모되므로
+                    # 그 꼬리를 잘라 스캔 호출을 줄인다(품질은 지연으로 소폭 손해 가능).
+                    if fail_stop and _fails >= fail_stop:
+                        break
 
     # -- 잔여(마감 초과 포함) -> 빈 창 강제 배치: 출력은 항상 완전한 배정 --------
     def _force(i):

@@ -24,13 +24,24 @@ _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 def default_portfolio() -> list:
     """이벤트 구동 dispatch 포트폴리오 (A/B로 전 인스턴스 최고 성능 확정).
-    멤버는 ATC κ 다양성(0.5/1/2/4, 플레이북 §6) + 시드·파괴율 다양성으로만 분기한다.
-    부모 warm 빌드가 configs[0]을 써 빠른 첫 인증해 + floor를 만든다."""
+    멤버는 ATC κ 다양성(0.5/1/2/4, 플레이북 §6) + 시드·파괴율 다양성 + admission
+    조기중단(fail_stop) 다양성으로 분기한다. 부모 warm 빌드가 configs[0]을 써 빠른
+    첫 인증해 + floor를 만든다.
+
+    (κ, F) 조합 전수 재설계 (2026-07-14, tools/diag_kf_eval.py successive-halving +
+    diag_kf_analyze.py greedy/LOO-CV). 혼잡 8문제(26·28·30·31·33·38·39·40)에 CRN 페어링,
+    2-wave(스크리닝 25s→확인 45s×2시드) + 연속 (κ,F) refine(κ≈3 근처 보간, grid 아님).
+    κ와 F가 강하게 상호작용(F-response 곡선이 κ의존)이라 (κ,F) 쌍을 min-aggregation greedy로
+    선택. **선택 = {κ4/F0(warm), κ3/F8(스크리닝 최강), κ2.5/F12(보간 refine), κ1/F24}**.
+    검증: 8문제 in-sample 초과%합 0.00, **LOO-CV held-out 평균 0.28%**(8중 7홀드아웃이 동일
+    subset·0.00%, 과적합 최소). κ3/F8·κ2.5/F12는 원래 없던 연속점이 이산값을 이김. 발견:
+    κ=2(구 warm)가 최약·κ=4가 최강 full, deep 3+full 1이 full 2보다 우수. mask/scan_incremental
+    기본 on(비트동일) 전 워커 자동. configs[0](full)이 warm/floor+단일워커 fallback."""
     return [
-        OuterConfig(xi=0.4, seed=0, phase2=Phase2Config(atc_kappa=2.0)),
-        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=0.5)),
-        OuterConfig(xi=0.3, seed=4, phase2=Phase2Config(atc_kappa=1.0)),
-        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=4.0)),
+        OuterConfig(xi=0.4, seed=0, phase2=Phase2Config(atc_kappa=4.0)),                              # full (warm/floor)
+        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8)),  # deep (스크리닝 최강)
+        OuterConfig(xi=0.3, seed=4, phase2=Phase2Config(atc_kappa=2.5, dispatch_admit_fail_stop=12)), # deep (연속 refine)
+        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24)), # deep (κ1 高F)
     ]
 
 
@@ -132,6 +143,13 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     pre_path = os.path.join(tmpdir, "pre.pkl")
     with open(prob_path, "w", encoding="utf-8") as f:
         json.dump(prob_info, f)
+    # warm 빌드가 pre에 붙인 마스크 캐시(수십 MB)는 피클에서 제외 -- 워커는 첫
+    # realize에서 자체 재빌드 후 재사용하므로(측정도 그 기준) 크로스-프로세스 전송은
+    # 불필요한 보너스일 뿐이고, 부하 시 피클/전송 비용이 예산을 갉는 리스크만 준다.
+    try:
+        delattr(pre, "_raster_mask_cache")
+    except AttributeError:
+        pass
     try:
         with open(pre_path, "wb") as f:
             pickle.dump(pre, f, protocol=pickle.HIGHEST_PROTOCOL)
