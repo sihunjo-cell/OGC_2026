@@ -32,6 +32,13 @@ tardiness 최대 block들은 plan상 burst 초입(11~46일)에 들어가야 하�
 뒤(56~69일, **slip +40~55일**)에 들어간다. 작은 bay에선 이들의 자리가 burst 중 아예 안 생기고,
 ATC urgency 순서는 이들을 계속 밀어낸다.
 
+**④ 사후해부 — 대기를 강제한 것은 우리 자신의 발동 조건이다 (마지막 고리).** tardiness 최대
+block 12개를 하나씩 감사하니 **12/12가 자기 plan 일에 (다른 bay에) 면적상 자리가 있었다**(예:
+필요 159 vs 빈 1214). 큐가 있던 날의 빈면적 낭비도 16~19%. 즉 용량 부족이 아니다 — dynamic bay의
+발동 조건이 `t+P>D`(늦음이 확정된 뒤)라서, 장기 block은 **확정적으로 늦어질 때까지 다른 bay를 쓸
+자격이 없었고**, 기다리는 사이 burst가 자리를 삼켰다. (reroute 자체는 31에서 순효과가 크다:
+rerouted block들의 tardiness 합 −413. 문제는 시점이다.)
+
 ## 현재 문제
 
 ### 1. 우리 개선기의 수(手)가 이 병인에 안 닿는다
@@ -48,9 +55,10 @@ ATC urgency 순서는 이들을 계속 밀어낸다.
 
 ### A. admission 순서에 plan을 주입 ([01-burst-plan](01-burst-plan.md)) — 이 문제의 주 처방
 
-③이 보여준 "slip +40~55일"은 순서의 문제다. plan이 "이 장기 block은 burst 초입에 들어가야 한다"를
-urgency에 주입하면 굶주림이 직접 완화된다. 의사-due 프로토타입(due date를 plan 완료일로 치환 →
-배치 엔진이 plan-지연을 urgency로 봄)으로 상한을 재는 실험이 설계·진행 중이다.
+③·④가 보여준 굶주림은 순서·자격의 문제다. 의사-due 프로토타입(due date를 plan 완료일로 치환)은
+31에서 −1.2~2.0%로 방향은 맞지만 seed 분산 수준 — **정밀화된 주입 지점은 ④가 직접 알려줬다:
+plan-triggered reroute**(자기 bay에 자리 없음 + plan 일 경과 시, 늦음 확정을 기다리지 않고 다른
+bay 사용 자격 부여, 상수 0개). 상세는 [01-burst-plan](01-burst-plan.md)의 A′.
 
 ### B. free space 보존 배치 ([02-big-block](02-big-block.md)) — 보조 처방
 
