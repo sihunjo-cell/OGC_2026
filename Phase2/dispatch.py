@@ -58,19 +58,11 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     abar = (sum(amin) / n) if n else 1.0
     # 동적 bay: 부하 균형용 bay별 점유면적/용량 추적(least-util bay로 라우팅).
     bay_area = bay_occ = None
-    reroute_guard = bool(getattr(cfg, "dispatch_reroute_guard", False))
-    g_w1 = g_w3 = 1.0
-    S = None
     if dyn_bay:
         _bd = prob_info["bays"]
         bay_area = [max(1.0, _bd[j]["width"] * _bd[j]["height"])
                     for j in range(pre.n_bays)]
         bay_occ = [0.0] * pre.n_bays
-        if reroute_guard:
-            _w = prob_info.get("weights", {})
-            g_w1 = float(_w.get("w1", 1.0))
-            g_w3 = float(_w.get("w3", 1.0))
-            S = [b["bay_preferences"] for b in blocks]
     kappa = max(1e-9, float(cfg.atc_kappa))
     alpha = float(cfg.atc_alpha)
 
@@ -198,15 +190,9 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     # 조건부: 지금 넣어도 지각(t+P>D)인 급한 블록만 다른 bay로 admit-now.
                     # 여유 블록은 제 bay 대기(비혼잡 오라우팅 회귀 방지).
                     if dyn_bay and t + P[i] > D[i]:
-                        pool = (b for b in elig_bays[i] if b != j)
-                        if reroute_guard:
-                            # 목적-aware 가드: 선호손실(Z3)이 이미 확정된 지각비용을
-                            # 넘는 bay 제외. 지각이 클수록 더 비선호 bay가 해금.
-                            _late = t + P[i] - D[i]
-                            pool = [b for b in pool
-                                    if g_w3 * (S[i][j] - S[i][b]) <= g_w1 * _late]
-                        # 허용된 bay 중 가장 여유있는(least-util) 순으로 시도.
-                        cands = sorted(pool, key=lambda b: bay_occ[b] / bay_area[b])
+                        # 다른 eligible bay 중 가장 여유있는(least-util) 순으로 시도.
+                        cands = sorted((b for b in elig_bays[i] if b != j),
+                                       key=lambda b: bay_occ[b] / bay_area[b])
                         for j2 in cands:
                             if _try_admit(i, j2, t, _rank, _earlier):
                                 bay[i] = j2

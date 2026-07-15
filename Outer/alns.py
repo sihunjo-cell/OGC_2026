@@ -4,6 +4,7 @@ Outer.alns -- ALNS driver over bay assignments.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from random import Random
 
@@ -43,6 +44,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "iters": 0,
         "accepted": 0,
         "improved": 0,
+        "restarts": 0,
         "f0": s.objective,
         "f_best": s_best.objective,
         "elapsed_s": 0.0,
@@ -53,6 +55,10 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "best_events": [[time.perf_counter() - t0, s.objective]],
         "iter_t": [],   # 반복 완료 시각(t0 기준). diff -> 반복 1회 비용 분포.
     }
+    # 정체 재시작(restart_stall>0): κ-지터 구성으로 새 basin 탐색(s_best는 유지).
+    restart_stall = int(getattr(cfg, "restart_stall", 0) or 0)
+    since_best = 0
+    base_kappa = float(cfg.phase2.atc_kappa) if cfg.phase2 is not None else 2.0
 
     it = 0
     if deadline is not None and time.perf_counter() >= deadline:
@@ -90,6 +96,23 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             s_best = s2
             stats["improved"] += 1
             stats["best_events"].append([time.perf_counter() - t0, s2.objective])
+            since_best = 0
+        else:
+            since_best += 1
+
+        # 정체 재시작: κ-지터 구성으로 새 basin (s_best 유지, 온도 리셋).
+        if restart_stall and since_best >= restart_stall and cfg.phase2 is not None:
+            jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))
+            p2j = dataclasses.replace(cfg.phase2, atc_kappa=jk)
+            sj = realize(p1.bay, prob_info, pre, p2j, deadline=deadline)
+            if sj.feasible:
+                s = sj
+                if sj.objective < s_best.objective:
+                    s_best = sj
+                    stats["best_events"].append([time.perf_counter() - t0, sj.objective])
+                T = init_temperature(s.objective, cfg.w_pct)
+            stats["restarts"] += 1
+            since_best = 0
 
         stats["iter_t"].append(time.perf_counter() - t0)
         T *= cfg.c
