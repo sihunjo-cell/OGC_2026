@@ -1,4 +1,4 @@
-"""Outer.config -- ALNS 튜닝 파라미터(destroy/repair/AOS/acceptance)를 한곳에."""
+"""Outer.config -- ALNS tuning parameters."""
 
 from __future__ import annotations
 
@@ -7,21 +7,19 @@ from dataclasses import dataclass
 
 @dataclass
 class OuterConfig:
-    # -- O.1 destroy(제거) ----------------------------------------------------
-    xi: float = 0.4                                  # 제거 비율 q = xi*n
+    # -- O.1 destroy -----------------------------------------------------------
+    xi: float = 0.4
     destroy_ops: tuple = ("random", "worst", "related")
-    p_worst: float = 6.0                             # worst 제거 결정성 지수(클수록 상위 편향)
-    p_shaw: float = 6.0                              # shaw 제거 결정성 지수
-    phi: float = 1.0                                 # R_related: 같은 베이 여부
-    chi: float = 1.0                                 # R_related: 진입시각 차 |ENTRY_i - ENTRY_j|
-    psi: float = 1.0                                 # R_related: 공간 근접도
-    omega: float = 1.0                               # R_related: 형상 유사도
+    p_worst: float = 6.0
+    p_shaw: float = 6.0
+    phi: float = 1.0
+    chi: float = 1.0
+    psi: float = 1.0
+    omega: float = 1.0
 
-    # -- O.2 repair(복구) -----------------------------------------------------
+    # -- O.2 repair ------------------------------------------------------------
     repair_ops: tuple = ("greedy", "regret_k")
     regret_k: int = 3
-    # 삽입 비용 노이즈: 없으면 결정적 greedy가 방금 제거한 배정을 그대로
-    # 복원해 이웃이 한 점으로 붕괴한다
     repair_noise: float = 0.1
 
     # Z1 인지 혼잡 페널티: repair는 지연(Z1, Phase 2에서만 드러남)을 못 보므로
@@ -43,5 +41,5 @@ class OuterConfig:
 
     # -- 기타 ------------------------------------------------------------------
     seed: int = 0
-    phase1: object = None                            # 초기해용 Phase1Config (None이면 기본값)
-    phase2: object = None                            # realize()용 Phase2Config (None이면 기본값)
+    phase1: object = None
+    phase2: object = None
