@@ -1,6 +1,6 @@
 """
 Outer.objective -- repair/destroy가 Phase 2 없이 쓰는 배정 수준 목적함수 조각
-(z2_raw 불균형, z3_of_bay 선호, block_cost).
+(z2_raw 불균형, block_cost).
 """
 
 from __future__ import annotations
@@ -22,10 +22,6 @@ def z2_raw(loads: list, u: list) -> float:
         return 0.0
     wl = [u[j] * loads[j] for j in range(m)]
     return max(wl) - min(wl)
-
-
-def z3_of_bay(bay: list, Smax: list, S: list) -> float:
-    return sum(Smax[i] - S[i][bay[i]] for i in range(len(bay)) if bay[i] is not None)
 
 
 def block_cost(i: int, s, w1: float, w3: float, D: list, Smax: list, S: list) -> float:

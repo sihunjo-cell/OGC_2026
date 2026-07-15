@@ -19,6 +19,11 @@ class Phase2Config:
     dispatch_admit_fail_stop: int = 0
     # 마스크 캐시를 pre에 공유해 설계도(Raster 인스턴스) 간 재사용(비트동일).
     mask_cache_share: bool = True
+    # 동적 bay 선택. 블록이 배정 bay에 못 들고 '지금 넣어도 지각(t+P>D)'인 급한 블록이면
+    # 다른 eligible bay 중 가장 여유있는(least-util) bay로 admit-now 시도 -- 고정-bay가
+    # 못 푸는 no_space(다른 bay엔 자리 있음)를 해소. 여유 블록은 제 bay 대기.
+    # False = 고정-bay 동작(포트폴리오의 dyn-off floor 워커가 사용).
+    dispatch_dynamic_bay: bool = True
 
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2

@@ -23,16 +23,21 @@ _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
 def default_portfolio() -> list:
-    """이벤트 구동 dispatch 4-워커 포트폴리오 (A/B로 전 인스턴스 최고 성능 확정).
-    ATC κ + 시드·파괴율 + admission 조기중단(fail_stop) 다양성으로 분기.
-    선택 = {κ4/F0, κ3/F8, κ2.5/F12, κ1/F24} (혼잡 8문제 CRN 튜닝 + LOO-CV로 과적합 확인).
-    configs[0](full, κ4)이 부모 warm 빌드로 첫 인증해 + floor + 단일워커 fallback을 담당.
-    mask/scan_incremental 기본 on(비트동일)."""
+    """이벤트 구동 dispatch 4-워커 포트폴리오: κ3/F8·κ1/F24 각 dyn-on/off 페어, min-wins.
+    - dyn-on 페어(κ3·κ1): 동적 bay 재라우팅으로 혼잡 문제 담당(κ-다양성). 정체 재시작
+      (κ3→stall8, κ1→stall16)으로 장예산에서 κ-지터 구성의 새 basin 탐색(단예산선 비활성).
+    - dyn-off 페어(κ3·κ1): 재라우팅(선호bay 이탈=Z3 손해)이 해로운 고-w3 유형을 flooring.
+    configs[0](κ3 dyn-on)이 부모 warm 빌드로 첫 인증해 + 단일워커 fallback을 담당.
+    워커 서브프로세스는 BLAS 1스레드 핀(평가서버 4코어 cpulimit 스로틀 방지)."""
     return [
-        OuterConfig(xi=0.4, seed=0, phase2=Phase2Config(atc_kappa=4.0)),                              # full (warm/floor)
-        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8)),  # deep (스크리닝 최강)
-        OuterConfig(xi=0.3, seed=4, phase2=Phase2Config(atc_kappa=2.5, dispatch_admit_fail_stop=12)), # deep (연속 refine)
-        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24)), # deep (κ1 高F)
+        OuterConfig(xi=0.3, seed=1, restart_stall=8,
+                    phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8)),   # κ3 dyn-on (warm, 재시작8)
+        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
+                                                        dispatch_dynamic_bay=False)),                  # κ3 dyn-off (32 floor)
+        OuterConfig(xi=0.5, seed=5, restart_stall=16,
+                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24)),  # κ1 dyn-on (혼잡 최강, 재시작16)
+        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                                        dispatch_dynamic_bay=False)),                  # κ1 dyn-off (37/25 floor)
     ]
 
 
@@ -167,7 +172,12 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                 "" if deadline is None else str(deadline),
                 "" if deadline_s is None else str(deadline_s),
             ]
-            p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # 워커 BLAS 1스레드 핀: 평가서버(4코어, cpulimit 400%)에서 4워커×다중스레드
+            # BLAS 초과구독 -> 스로틀 방지 (4x1=400% 정확). 결과는 스레드수와 무관(비트동일 확인).
+            p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 env={**os.environ,
+                                      "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
+                                      "OPENBLAS_NUM_THREADS": "1", "NUMEXPR_NUM_THREADS": "1"})
             procs.append((p, out_path))
     except Exception:
         for p, _ in procs:

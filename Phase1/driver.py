@@ -12,7 +12,7 @@ def build_bay_assignment(prob_info: dict, pre, cfg: Phase1Config = None):
     cfg = cfg or Phase1Config()
 
     bay = firstfit_greedy(prob_info, pre, cfg)
-    out = init_timing(bay, prob_info, pre, cfg)
+    out = init_timing(bay, prob_info, pre)
     return out, "greedy"
 
 

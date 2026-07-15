@@ -6,7 +6,6 @@ key()는 방문 집합용 해시 가능한 지문.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
