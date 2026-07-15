@@ -21,7 +21,10 @@ from .raster import Raster
 
 
 def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
-    """반환 (coords, orient, entry, exit_, forced_cons)."""
+    """반환 (coords, orient, entry, exit_, forced_cons, bay).
+
+    동적 bay(dispatch_dynamic_bay)가 admission 실패 시 급한 블록을 다른 bay로
+    재라우팅할 수 있어 bay가 입력과 달라질 수 있으므로 최종 bay도 함께 반환한다."""
     blocks = prob_info["blocks"]
     n = len(blocks)
     P = [b["processing_time"] for b in blocks]
@@ -29,6 +32,23 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     R = [b["release_time"] for b in blocks]
     bay = list(p1_out.bay)
 
+    dyn_bay = bool(getattr(cfg, "dispatch_dynamic_bay", True))
+    # 동적 bay: 블록별 배치가능(IFP 유효) 후보 bay 집합을 사전계산(선호순 = 동점 tiebreak;
+    # 실제 라우팅은 admission 실패 시점에 least-util 순으로 재정렬해 선택).
+    elig_bays = None
+    if dyn_bay:
+        elig_bays = [[] for _ in range(n)]
+        for i in range(n):
+            pf = blocks[i].get("bay_preferences", [])
+            cand = []
+            for j2 in range(pre.n_bays):
+                for o in range(len(pre.poly[i])):
+                    (xl, xh), (yl, yh) = pre.IFP[i][o][j2]
+                    if xl <= xh and yl <= yh:
+                        cand.append(j2)
+                        break
+            cand.sort(key=lambda j2: -(pf[j2] if j2 < len(pf) else 0))
+            elig_bays[i] = cand
     raster = Raster(prob_info, pre,
                     incremental=bool(getattr(cfg, "scan_incremental", True)),
                     mask_share=bool(getattr(cfg, "mask_cache_share", False)))
@@ -36,6 +56,21 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
     abar = (sum(amin) / n) if n else 1.0
+    # 동적 bay: 부하 균형용 bay별 점유면적/용량 추적(least-util bay로 라우팅).
+    bay_area = bay_occ = None
+    reroute_guard = bool(getattr(cfg, "dispatch_reroute_guard", False))
+    g_w1 = g_w3 = 1.0
+    S = None
+    if dyn_bay:
+        _bd = prob_info["bays"]
+        bay_area = [max(1.0, _bd[j]["width"] * _bd[j]["height"])
+                    for j in range(pre.n_bays)]
+        bay_occ = [0.0] * pre.n_bays
+        if reroute_guard:
+            _w = prob_info.get("weights", {})
+            g_w1 = float(_w.get("w1", 1.0))
+            g_w3 = float(_w.get("w3", 1.0))
+            S = [b["bay_preferences"] for b in blocks]
     kappa = max(1e-9, float(cfg.atc_kappa))
     alpha = float(cfg.atc_alpha)
 
@@ -126,6 +161,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             for k in placed[j]:
                 if exit_[k] <= t:
                     raster.remove(j, k, orient[k], coords[k])
+                    if dyn_bay:
+                        bay_occ[j] -= amin[k]
                 else:
                     keep.append(k)
             placed[j] = keep
@@ -150,11 +187,40 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     _earlier += 1
                     _fails = 0
                     queue[j].remove(i)
+                    if dyn_bay:
+                        bay_occ[j] += amin[i]
                     x = int(exit_[i])
                     if x not in in_ev:
                         heapq.heappush(ev, x)
                         in_ev.add(x)
                 else:
+                    admitted_elsewhere = False
+                    # 조건부: 지금 넣어도 지각(t+P>D)인 급한 블록만 다른 bay로 admit-now.
+                    # 여유 블록은 제 bay 대기(비혼잡 오라우팅 회귀 방지).
+                    if dyn_bay and t + P[i] > D[i]:
+                        pool = (b for b in elig_bays[i] if b != j)
+                        if reroute_guard:
+                            # 목적-aware 가드: 선호손실(Z3)이 이미 확정된 지각비용을
+                            # 넘는 bay 제외. 지각이 클수록 더 비선호 bay가 해금.
+                            _late = t + P[i] - D[i]
+                            pool = [b for b in pool
+                                    if g_w3 * (S[i][j] - S[i][b]) <= g_w1 * _late]
+                        # 허용된 bay 중 가장 여유있는(least-util) 순으로 시도.
+                        cands = sorted(pool, key=lambda b: bay_occ[b] / bay_area[b])
+                        for j2 in cands:
+                            if _try_admit(i, j2, t, _rank, _earlier):
+                                bay[i] = j2
+                                bay_occ[j2] += amin[i]
+                                queue[j].remove(i)
+                                x = int(exit_[i])
+                                if x not in in_ev:
+                                    heapq.heappush(ev, x)
+                                    in_ev.add(x)
+                                admitted_elsewhere = True
+                                _fails = 0
+                                break
+                    if admitted_elsewhere:
+                        continue
                     _fails += 1
                     # 마지막 admit 이후 F회 연속 실패 -> 남은 큐는 다음 이벤트로 이월.
                     if fail_stop and _fails >= fail_stop:
@@ -176,4 +242,4 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     for i in range(n):
         if i not in coords:      # 방어적 (이벤트 누락 등)
             _force(i)
-    return coords, orient, entry, exit_, forced_cons
+    return coords, orient, entry, exit_, forced_cons, bay

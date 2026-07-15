@@ -73,9 +73,6 @@ class NFPCache:
         """두 block의 layer k 간 NFP (같은 높이 공간 충돌)."""
         return self.crane(i, n, oi, on, k, k)
 
-    def __len__(self) -> int:
-        return len(self._cache)
-
 
 # -----------------------------------------------------------------------------
 # 0.2 테이블 빌더

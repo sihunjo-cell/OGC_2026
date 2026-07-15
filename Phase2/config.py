@@ -19,6 +19,17 @@ class Phase2Config:
     dispatch_admit_fail_stop: int = 0
     # 마스크 캐시를 pre에 공유해 설계도(Raster 인스턴스) 간 재사용(비트동일).
     mask_cache_share: bool = True
+    # 동적 bay 선택 (배포 기본값). 블록이 배정 bay에 못 들고 '지금 넣어도 지각(t+P>D)'인
+    # 급한 블록이면 다른 eligible bay 중 가장 여유있는(least-util) bay로 admit-now 시도.
+    # 고정-bay가 못 푸는 no_space(다른 bay엔 자리 있음)를 해소 -> tardiness 대폭↓.
+    # False = 구(舊) 고정-bay 동작(A/B용). 여유 블록은 제 bay 대기(비혼잡 회귀 방지).
+    dispatch_dynamic_bay: bool = True
+    # 재라우팅 가드(실험, 목적-aware): 대체 bay의 선호손실(Z3 비용)이 '이미 확정된
+    # 지각비용' 이하일 때만 허용 -- w3*(S[i][j]-S[i][b]) <= w1*(t+P-D). 지각이 커질수록
+    # 더 비선호 bay가 자동 해금(self-scaling, 튜닝 상수 0개, 문제 가중치/데이터만 사용).
+    # 목표: 고-w3 문제의 유해 reroute 자동 차단 -> dyn-off floor 워커 불요.
+    # False = 무가드(현행 least-util). off시 바이트동일.
+    dispatch_reroute_guard: bool = False
 
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2

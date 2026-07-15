@@ -45,7 +45,6 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "improved": 0,
         "f0": s.objective,
         "f_best": s_best.objective,
-        "traj": [],
         "elapsed_s": 0.0,
         "deadline_s": deadline_s,
         "stopped_by_deadline": False,
@@ -92,7 +91,6 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             stats["improved"] += 1
             stats["best_events"].append([time.perf_counter() - t0, s2.objective])
 
-        stats["traj"].append(s2.objective)
         stats["iter_t"].append(time.perf_counter() - t0)
         T *= cfg.c
         it += 1
@@ -106,9 +104,3 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     stats["f_best"] = s_best.objective
     stats["elapsed_s"] = time.perf_counter() - start
     return s_best, stats
-
-
-def optimize(prob_info: dict, pre, time_limit: float, cfg: OuterConfig = None):
-    """Return the best solution as an operations dict."""
-    s_best, _ = alns(prob_info, pre, time_limit, cfg)
-    return s_best.solution

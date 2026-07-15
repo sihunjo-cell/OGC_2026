@@ -2,7 +2,7 @@
 
 Phase 0이 미리 계산해 둔 순수 꼭짓점 ring/테이블(PRE.nfp, PRE.poly, PRE.bbox)을
 shapely 없이 사용. 좌표 변환, AABB/point-in-ring 겹침, NFP reflection +
-relative-NFP 캐시 조회, contact 길이, 점수 헬퍼를 다룬다."""
+relative-NFP 캐시 조회를 다룬다."""
 
 from __future__ import annotations
 
@@ -30,25 +30,11 @@ _EPS = 1e-9
 # 좌표 변환
 # -----------------------------------------------------------------------------
 
-def translate_layer(layer: list, dx: float, dy: float) -> list:
-    return [(x + dx, y + dy) for (x, y) in layer]
-
-
-def world_layers(pre, i: int, o: int, pos: tuple) -> list:
-    """블록 i(orientation o)의 모든 layer를 기준점이 pos = (x, y)에 오도록 평행이동."""
-    x, y = pos
-    return [translate_layer(layer, x, y) for layer in pre.poly[i][o]]
-
-
 def world_bbox(pre, i: int, o: int, pos: tuple) -> tuple:
     """pos에 놓인 블록 i(orientation o)의 bounding box, bay 좌표계."""
     x, y = pos
     x0, y0, x1, y1 = pre.bbox[i][o]
     return (x0 + x, y0 + y, x1 + x, y1 + y)
-
-
-def num_orientations(pre, i: int) -> int:
-    return len(pre.poly[i])
 
 
 def num_layers(pre, i: int, o: int) -> int:
@@ -192,101 +178,8 @@ def relative_nfp_crane(pre, moving: int, fixed: int, o_m: int, o_f: int,
 
 
 # -----------------------------------------------------------------------------
-# Contact / 점수 헬퍼
+# bbox 헬퍼 (destroy 연산자용)
 # -----------------------------------------------------------------------------
-
-def _seg_overlap_len(a1, a2, b1, b2) -> float:
-    """두 선분이 공선(collinear)이면 겹치는 길이, 아니면 0."""
-    dax, day = a2[0] - a1[0], a2[1] - a1[1]
-    L = math.hypot(dax, day)
-    if L < _EPS:
-        return 0.0
-    # b1, b2가 a1, a2를 지나는 무한직선 위에 있어야 함 (cross product ~ 0)
-    if abs((b1[0] - a1[0]) * day - (b1[1] - a1[1]) * dax) > _EPS * max(1.0, L):
-        return 0.0
-    if abs((b2[0] - a1[0]) * day - (b2[1] - a1[1]) * dax) > _EPS * max(1.0, L):
-        return 0.0
-    ux, uy = dax / L, day / L
-    tb1 = (b1[0] - a1[0]) * ux + (b1[1] - a1[1]) * uy
-    tb2 = (b2[0] - a1[0]) * ux + (b2[1] - a1[1]) * uy
-    lo = max(0.0, min(tb1, tb2))
-    hi = min(L, max(tb1, tb2))
-    return max(0.0, hi - lo)
-
-
-@_njit(cache=True)
-def _shared_edge_kernel(A, B, eps):       # pragma: no cover (njit)
-    """njit -- shared_edge_length의 _seg_overlap_len 이중 루프를 bit-identical
-    (수치 동일)하게 옮긴 것."""
-    nA = A.shape[0]
-    nB = B.shape[0]
-    tot = 0.0
-    for i in range(nA):
-        a1x = A[i, 0]; a1y = A[i, 1]
-        i2 = i + 1
-        if i2 == nA:
-            i2 = 0
-        dax = A[i2, 0] - a1x
-        day = A[i2, 1] - a1y
-        L = math.hypot(dax, day)
-        if L < eps:
-            continue
-        Lmax = eps * (L if L > 1.0 else 1.0)      # eps * max(1.0, L)
-        ux = dax / L
-        uy = day / L
-        for j in range(nB):
-            b1x = B[j, 0]; b1y = B[j, 1]
-            j2 = j + 1
-            if j2 == nB:
-                j2 = 0
-            b2x = B[j2, 0]; b2y = B[j2, 1]
-            if abs((b1x - a1x) * day - (b1y - a1y) * dax) > Lmax:
-                continue
-            if abs((b2x - a1x) * day - (b2y - a1y) * dax) > Lmax:
-                continue
-            tb1 = (b1x - a1x) * ux + (b1y - a1y) * uy
-            tb2 = (b2x - a1x) * ux + (b2y - a1y) * uy
-            lo = tb1 if tb1 < tb2 else tb2         # min(tb1, tb2)
-            if lo < 0.0:
-                lo = 0.0                           # max(0.0, .)
-            hi = tb1 if tb1 > tb2 else tb2         # max(tb1, tb2)
-            if hi > L:
-                hi = L                             # min(L, .)
-            d = hi - lo
-            if d > 0.0:                            # max(0.0, hi - lo)
-                tot += d
-    return tot
-
-
-def shared_edge_length(A: list, B: list) -> float:
-    """두 폴리곤 ring A, B가 일치(공선하며 겹침)하는 경계의 총 길이 -- 맞닿은
-    폴리곤의 정확한 contact 길이."""
-    if len(A) < 2 or len(B) < 2:
-        return 0.0
-    if _HAVE_NUMBA:
-        try:
-            return _shared_edge_kernel(_np.asarray(A, _np.float64),
-                                       _np.asarray(B, _np.float64), _EPS)
-        except Exception:                # pragma: no cover
-            pass
-    nA, nB = len(A), len(B)
-    tot = 0.0
-    for i in range(nA):
-        a1, a2 = A[i], A[(i + 1) % nA]
-        for j in range(nB):
-            b1, b2 = B[j], B[(j + 1) % nB]
-            tot += _seg_overlap_len(a1, a2, b1, b2)
-    return tot
-
-
-def bbox_overlap_area(a: tuple, b: tuple) -> float:
-    """두 AABB의 겹침 면적 (분리면 0). 값싼 premarshalling(vertical-sweep) 근사로 사용."""
-    ox = min(a[2], b[2]) - max(a[0], b[0])
-    oy = min(a[3], b[3]) - max(a[1], b[1])
-    if ox <= 0 or oy <= 0:
-        return 0.0
-    return ox * oy
-
 
 def centroid_of_bbox(bb: tuple) -> tuple:
     return ((bb[0] + bb[2]) * 0.5, (bb[1] + bb[3]) * 0.5)
@@ -295,69 +188,3 @@ def centroid_of_bbox(bb: tuple) -> tuple:
 def bay_diagonal(prob_info, j: int) -> float:
     b = prob_info["bays"][j]
     return math.hypot(b["width"], b["height"])
-
-
-# -----------------------------------------------------------------------------
-# Convex hull + 선분 교차 (2.1 NIRI, 2.2 vertex+intersection)
-# -----------------------------------------------------------------------------
-
-def _shoelace(pts: list) -> float:
-    n = len(pts)
-    if n < 3:
-        return 0.0
-    s = 0.0
-    for i in range(n):
-        x1, y1 = pts[i]
-        x2, y2 = pts[(i + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) * 0.5
-
-
-def convex_hull(points: list) -> list:
-    """Andrew의 monotone-chain convex hull (반시계, 마지막 점 중복 없음).
-    순수 파이썬, scipy 없음."""
-    pts = sorted(set((float(x), float(y)) for x, y in points))
-    if len(pts) <= 2:
-        return pts
-
-    def cross(o, a, b):
-        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-    lower = []
-    for p in pts:
-        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
-            lower.pop()
-        lower.append(p)
-    upper = []
-    for p in reversed(pts):
-        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
-            upper.pop()
-        upper.append(p)
-    return lower[:-1] + upper[:-1]
-
-
-def convex_hull_area(points: list) -> float:
-    """점 집합의 convex hull 면적."""
-    return _shoelace(convex_hull(points))
-
-
-def polygon_area(pts: list) -> float:
-    """폴리곤 ring의 shoelace 면적."""
-    return _shoelace(pts)
-
-
-def seg_intersect(p1, p2, p3, p4):
-    """선분 p1p2와 p3p4의 단일 교점, 없으면 None (평행 / 공선 / 안 만남).
-    끝점이 닿는 것도 교차로 침."""
-    x1, y1 = p1
-    x2, y2 = p2
-    x3, y3 = p3
-    x4, y4 = p4
-    d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-    if abs(d) < _EPS:
-        return None
-    t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / d
-    u = ((x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2)) / d
-    if -1e-9 <= t <= 1 + 1e-9 and -1e-9 <= u <= 1 + 1e-9:
-        return (x1 + t * (x2 - x1), y1 + t * (y2 - y1))
-    return None

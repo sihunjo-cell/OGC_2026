@@ -118,6 +118,3 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng) -> lis
         bay[i] = max(elig, key=lambda j: bays[j]["width"] * bays[j]["height"])
 
     return bay
-
-
-REPAIR_OPS = ("greedy", "regret_k")

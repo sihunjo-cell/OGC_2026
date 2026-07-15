@@ -98,10 +98,15 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         return None
 
     # ---- 배치: 이벤트 구동 ATC 디스패처 (Phase2.dispatch) --------------------
-    coords, orient, d_entry, d_exit, forced_cons = dispatch_construct(
+    coords, orient, d_entry, d_exit, forced_cons, d_bay = dispatch_construct(
         prob_info, p1_out, pre, cfg, deadline=deadline)
     entry[:] = d_entry
     exit_[:] = d_exit
+    # 동적 bay가 배정을 바꿨을 수 있으므로 bay/bay_blocks를 dispatch 결과로 갱신.
+    bay[:] = d_bay
+    bay_blocks = [[] for _ in range(pre.n_bays)]
+    for i in range(n):
+        bay_blocks[bay[i]].append(i)
 
     # ---- 크레인 인증 + repair 루프 ----------------------------------
     # Phase A: 값싼 점진 패스 -- 충돌 블록을 전부 하루씩 미뤄서(Z1-marginal 순서)
@@ -162,6 +167,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         entry=entry,
         exit_=exit_,
         Z1=Z1,
+        bay=list(bay),          # 재라우팅 반영된 실제 배정 (dyn-off면 입력과 동일)
         info={
             "feasible": feasible,
             "stage": stage,

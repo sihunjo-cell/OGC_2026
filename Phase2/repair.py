@@ -6,17 +6,10 @@ victim 선택은 Z1-marginal 규칙: 충돌 블록 중 하루 미뤘을 때 지�
 
 from __future__ import annotations
 
-from . import geometry_query as gq
-
 
 def z1_marginal(k: int, exit_: list, D: list) -> int:
     """블록 k의 exit를 하루 미룰 때 늘어나는 지연."""
     return max(0, exit_[k] + 1 - D[k]) - max(0, exit_[k] - D[k])
-
-
-def select_victim(conflict_ids: list, exit_: list, D: list) -> int:
-    """Z1 증가분이 가장 작은 충돌 블록 선택 (동점이면 낮은 id)."""
-    return min(conflict_ids, key=lambda k: (z1_marginal(k, exit_, D), k))
 
 
 def shift_later(victim: int, entry: list, exit_: list, P: list, stage: int) -> None:
