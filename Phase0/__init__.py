@@ -1,8 +1,4 @@
-"""Phase0 -- OGC 2026 전처리: 상수(0.1), 지오메트리 테이블(0.2), clique(0.3).
-
-    pre = preprocess(prob_info)                # 0.1 + 0.2
-    cliques = pre.cliques(entry, exit_, bay)   # 0.3, Phase 1 타이밍 이후
-"""
+"""Phase0 -- OGC 2026 전처리: 상수(0.1), 지오메트리 테이블(0.2), clique(0.3)."""
 
 from .config import DP_TOL, EPS
 from .constants import precompute_constants

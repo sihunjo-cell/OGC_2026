@@ -1,9 +1,0 @@
-[2026-07-11T17:44:53] CMD C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\venv\Scripts\python.exe -u C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\perf_report.py --mode anytime --horizon 5.0 --scoring-profile baseline --out C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\scoring_sweep_smoke\runs\20260711_174453_baseline_r1
-[2026-07-11 17:44:53] START probs=20 tasks=20 resume=0 out=C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\scoring_sweep_smoke\runs\20260711_174453_baseline_r1
-[2026-07-11 17:44:53]   mode=anytime · anytime horizon=5s(member0 단일 ALNS, 시계=load+preprocess+alns, 진단 제외) · real timelimits=[30.0, 60.0] grace=0.15 · scoring_profile=baseline · 체크포인트=['5', '10', '20', '30', '40', '50', '60', '90', '120', '150', '180']
-[2026-07-11 17:44:53] numba JIT warmup...
-[2026-07-11 17:45:01] warmup done.
-[2026-07-11 17:45:24]   train/prob_1|anytime|h5|sp=baseline feas=True first=NAs last_imp=NAs sat=N iters=0 obj=40742803 (23.037s)
-[2026-07-11 17:45:37]   train/prob_2|anytime|h5|sp=baseline feas=True first=NAs last_imp=NAs sat=N iters=0 obj=28340574 (12.479s)
-[2026-07-11 17:45:52]   train/prob_3|anytime|h5|sp=baseline feas=True first=NAs last_imp=NAs sat=N iters=0 obj=37025402 (15.437s)
-[2026-07-11 17:46:15]   train/prob_4|anytime|h5|sp=baseline feas=True first=NAs last_imp=NAs sat=N iters=0 obj=51744667 (22.355s)

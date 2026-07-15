@@ -1,9 +1,0 @@
-[2026-07-12 00:11:44] START probs=20 tasks=20 resume=0 out=C:\Users\82103\OneDrive\바탕 화면\OGC2026\OGC_2026\reports\sweep_smoke_venv\runs\20260712_001144_baseline_d5_r1
-[2026-07-12 00:11:44]   mode=anytime · anytime horizon=180s(member0 단일 ALNS, 시계=load+preprocess+alns, 진단 제외) · real timelimits=[30.0, 60.0] grace=0.15 · scoring_profile=baseline · 체크포인트=['10', '20', '30', '40', '50', '60', '90', '120', '150', '180']
-[2026-07-12 00:11:44] numba JIT warmup...
-[2026-07-12 00:11:54] warmup done.
-[2026-07-12 00:12:20]   train/prob_1|anytime|h180|sp=baseline|ad=5 feas=True first=5.9s last_imp=5.9s sat=Y iters=0 obj=40742803 (25.512s)
-[2026-07-12 00:12:32]   train/prob_2|anytime|h180|sp=baseline|ad=5 feas=True first=5.6s last_imp=5.6s sat=Y iters=0 obj=28340574 (12.262s)
-[2026-07-12 00:12:46]   train/prob_3|anytime|h180|sp=baseline|ad=5 feas=True first=5.6s last_imp=5.6s sat=Y iters=0 obj=37025402 (14.532s)
-[2026-07-12 00:13:09]   train/prob_4|anytime|h180|sp=baseline|ad=5 feas=True first=5.9s last_imp=5.9s sat=Y iters=0 obj=51744667 (22.481s)
-[2026-07-12 00:13:25]   train/prob_5|anytime|h180|sp=baseline|ad=5 feas=True first=6.1s last_imp=6.1s sat=Y iters=0 obj=41311648 (15.496s)

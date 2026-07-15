@@ -57,22 +57,3 @@ def footprint_area(pre, i: int) -> float:
 
 def time_overlap(entry, exit_, a: int, b: int) -> bool:
     return entry[a] < exit_[b] and entry[b] < exit_[a]
-
-
-def maximal_present_sets(entry, exit_, ids) -> list:
-    """주어진 timing에서의 최대 동시 체류 블록 집합들 (frozenset).
-
-    동시 체류하는 모든 쌍은 이 중 하나에 포함되므로, 시점별 제약은
-    maximal set당 하나로 줄어든다.
-    """
-    ids = list(ids)
-    if not ids:
-        return []
-    starts = sorted({entry[i] for i in ids})
-    snaps = set()
-    for t in starts:
-        s = frozenset(i for i in ids if entry[i] <= t < exit_[i])
-        if s:
-            snaps.add(s)
-    snaps = list(snaps)
-    return [s for s in snaps if not any(s < other for other in snaps)]
