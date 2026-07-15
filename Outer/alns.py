@@ -1,6 +1,4 @@
-"""
-Outer.alns -- ALNS driver over bay assignments.
-"""
+"""Outer.alns -- ALNS driver over bay assignments."""
 
 from __future__ import annotations
 
@@ -14,15 +12,16 @@ from .destroy import destroy
 from .operators import AOS
 from .realize import realize
 from .repair import repair
+from .intrabay_repair import improve_intrabay
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
          max_iters=None, deadline=None, deadline_s=None, t0=None):
     """Run ALNS until budget, deadline, or max_iters is reached.
 
-    t0: anytime 계측의 시각 원점(perf_counter 값). 미지정 시 alns 시작 시각.
-    stats["best_events"]/["iter_t"]는 진단용 추가 데이터로, 호출자가 무시하면
-    기존 동작과 완전히 동일하다(worker/portfolio는 stats를 버림)."""
+    t0 is the anytime measurement origin. If omitted, it is the ALNS start time.
+    best_events and iter_t are diagnostic data; callers may ignore them.
+    """
     cfg = cfg or OuterConfig()
     rng = Random(cfg.seed)
 
@@ -33,6 +32,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     budget_deadline = None if budget_s is None else (start + budget_s)
 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
+    s = improve_intrabay(s, prob_info, pre, cfg, rng, deadline=deadline)
     s_best = s
 
     T = init_temperature(s.objective, cfg.w_pct)
@@ -49,10 +49,8 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "elapsed_s": 0.0,
         "deadline_s": deadline_s,
         "stopped_by_deadline": False,
-        # anytime 곡선용: [t0 기준 상대시각(s), 그 시점의 incumbent objective].
-        # 첫 원소 = 초기 realize 완료 시점(= 최초로 반환 가능한 인증해).
         "best_events": [[time.perf_counter() - t0, s.objective]],
-        "iter_t": [],   # 반복 완료 시각(t0 기준). diff -> 반복 1회 비용 분포.
+        "iter_t": [],
     }
 
     it = 0
@@ -81,6 +79,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             break
 
         s2 = realize(bay2, prob_info, pre, cfg.phase2, deadline=deadline)
+        s2 = improve_intrabay(s2, prob_info, pre, cfg, rng, deadline=deadline)
 
         accepted = accept(s2.objective, s.objective, T, rng)
         aos.score_update(s2, s, s_best, op_rem, op_ins, accepted)
