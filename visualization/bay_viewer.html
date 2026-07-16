@@ -1,0 +1,1326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OGC 2026 — Bay 배치 3D 뷰어</title>
+<style>
+  /* ── 다크 테마 (dataviz 팔레트 dark 모드 기준) ─────────────────────── */
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #232322;
+    --ink:         #ffffff;
+    --ink-2:       #c3c2b7;
+    --ink-mute:    #898781;
+    --hairline:    rgba(255,255,255,0.10);
+    --grid:        #2c2c2a;
+    --blue:        #3987e5;
+    --blue-deep:   #1c5cab;
+    --green:       #0ca30c;
+    --yellow:      #c98500;
+    --red:         #e66767;
+    --red-deep:    #d03b3b;
+    --accent:      var(--blue);
+    --radius:      12px;
+    --shadow:      0 8px 28px rgba(0,0,0,0.45);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--page); color: var(--ink); }
+  #stage { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  .card {
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+  }
+
+  /* ── 상단 좌측: 제목 + 목적함수 ───────────────────────────────────── */
+  #hud-top-left {
+    position: fixed; top: 14px; left: 14px; z-index: 10;
+    padding: 12px 14px; max-width: 330px;
+  }
+  #hud-top-left h1 { font-size: 14px; font-weight: 700; letter-spacing: .2px; }
+  #hud-top-left h1 span { color: var(--ink-mute); font-weight: 500; }
+  #file-status { margin-top: 6px; font-size: 11.5px; color: var(--ink-2); line-height: 1.5; }
+  #file-status b { color: var(--ink); font-weight: 600; }
+  #obj-row { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .obj-chip {
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    border-radius: 7px; padding: 4px 8px; font-size: 11px; color: var(--ink-2);
+  }
+  .obj-chip b { display: block; color: var(--ink); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .obj-chip.total { border-color: color-mix(in srgb, var(--blue) 55%, transparent); }
+  #btn-reload {
+    margin-top: 9px; font-size: 11px; color: var(--ink-2);
+    background: none; border: 1px solid var(--hairline); border-radius: 6px;
+    padding: 3px 9px; cursor: pointer;
+  }
+  #btn-reload:hover { color: var(--ink); border-color: var(--ink-mute); }
+
+  /* ── 상단 중앙: bay 선택 ─────────────────────────────────────────── */
+  #hud-bays {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 10;
+    padding: 8px 10px; display: flex; align-items: center; gap: 7px; max-width: min(72vw, 900px);
+  }
+  #bay-chips { display: flex; gap: 5px; overflow-x: auto; scrollbar-width: thin; }
+  .bay-chip {
+    flex: 0 0 auto; cursor: pointer; user-select: none;
+    background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 8px;
+    padding: 4px 10px; text-align: center; font-size: 11px; color: var(--ink-2);
+    transition: border-color .15s, background .15s;
+  }
+  .bay-chip:hover { border-color: var(--ink-mute); }
+  .bay-chip.active { border-color: var(--blue); background: color-mix(in srgb, var(--blue) 18%, var(--surface-2)); color: var(--ink); }
+  .bay-chip b { display: block; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .nav-btn {
+    flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+    background: var(--surface-2); border: 1px solid var(--hairline); color: var(--ink-2);
+    font-size: 14px; line-height: 1;
+  }
+  .nav-btn:hover { color: var(--ink); border-color: var(--ink-mute); }
+
+  /* ── 우측: 상세/이벤트 패널 ──────────────────────────────────────── */
+  #hud-right {
+    position: fixed; top: 14px; right: 14px; z-index: 10; width: 252px;
+    padding: 12px 14px; font-size: 12px; display: none;
+  }
+  #hud-right h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--ink-mute); margin-bottom: 7px; }
+  #day-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin-bottom: 12px; }
+  .stat b { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 10.5px; color: var(--ink-mute); }
+  .stat b.warn { color: var(--red); }
+  #events { line-height: 1.55; color: var(--ink-2); max-height: 130px; overflow-y: auto; scrollbar-width: thin; }
+  #events .ev-in  { color: var(--green); font-weight: 600; }
+  #events .ev-out { color: var(--yellow); font-weight: 600; }
+  #events .blk-link { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+  #events .blk-link:hover { color: var(--ink); }
+  #sel-detail { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hairline); display: none; }
+  #sel-detail table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  #sel-detail td { padding: 2px 0; color: var(--ink-2); }
+  #sel-detail td:last-child { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+  #sel-title { font-weight: 700; font-size: 13px; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; }
+  #sel-swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  /* ── 하단: 타임라인 바 ───────────────────────────────────────────── */
+  #hud-bottom {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 10;
+    width: min(860px, calc(100vw - 28px)); padding: 10px 14px 12px;
+    display: none; flex-direction: column; gap: 6px;
+  }
+  #tl-row { display: flex; align-items: center; gap: 12px; }
+  #btn-play {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--hairline);
+    background: var(--surface-2); color: var(--ink); font-size: 13px; cursor: pointer; flex: 0 0 auto;
+  }
+  #btn-play:hover { border-color: var(--blue); }
+  #tl-slider-wrap { position: relative; flex: 1; height: 40px; }
+  #spark { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: .9; }
+  #day-slider {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer; margin: 0;
+  }
+  #day-slider::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+  #day-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 3px; height: 40px; border-radius: 2px; background: var(--ink);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 0 10px rgba(255,255,255,.35);
+  }
+  #day-slider::-moz-range-track { height: 100%; background: transparent; }
+  #day-slider::-moz-range-thumb {
+    width: 3px; height: 40px; border: none; border-radius: 2px; background: var(--ink);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6), 0 0 10px rgba(255,255,255,.35);
+  }
+  #day-label { flex: 0 0 auto; min-width: 108px; text-align: right; }
+  #day-label b { font-size: 19px; font-variant-numeric: tabular-nums; }
+  #day-label span { display: block; font-size: 10px; color: var(--ink-mute); margin-top: -2px; }
+  #tl-opts { display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--ink-2); flex-wrap: wrap; }
+  #tl-opts label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  #tl-opts select, #tl-opts input[type=range] { accent-color: var(--blue); }
+  #tl-opts select {
+    background: var(--surface-2); color: var(--ink); border: 1px solid var(--hairline);
+    border-radius: 6px; font-size: 11px; padding: 2px 5px;
+  }
+  #legend-urgency { display: none; align-items: center; gap: 5px; }
+  .lg-ramp { width: 74px; height: 8px; border-radius: 4px;
+    background: linear-gradient(90deg, #3987e5, #9a9994 55%, #e66767 80%, #d03b3b); }
+  #kbd-hint { color: var(--ink-mute); margin-left: auto; }
+  kbd {
+    font-family: inherit; font-size: 10px; border: 1px solid var(--hairline);
+    border-radius: 4px; padding: 0 4px; background: var(--surface-2);
+  }
+
+  /* ── 툴팁 ────────────────────────────────────────────────────────── */
+  #tooltip {
+    position: fixed; z-index: 30; pointer-events: none; display: none;
+    padding: 8px 11px; font-size: 11.5px; line-height: 1.5; max-width: 240px;
+    border-radius: 9px;
+  }
+  #tooltip b { font-size: 12.5px; }
+  #tooltip .tt-late { color: var(--red); font-weight: 700; }
+  #tooltip .tt-ok { color: var(--green); font-weight: 600; }
+  #tooltip .mut { color: var(--ink-mute); }
+
+  /* ── 초기 드롭 오버레이 ─────────────────────────────────────────── */
+  #drop-overlay {
+    position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at 50% 38%, #16223a 0%, var(--page) 62%);
+  }
+  #drop-card { width: min(560px, calc(100vw - 40px)); padding: 34px 38px; text-align: center; }
+  #drop-card h1 { font-size: 21px; margin-bottom: 6px; }
+  #drop-card p.sub { color: var(--ink-2); font-size: 13px; margin-bottom: 22px; }
+  #drop-zone {
+    border: 1.5px dashed var(--ink-mute); border-radius: var(--radius);
+    padding: 30px 18px; cursor: pointer; transition: border-color .15s, background .15s;
+    font-size: 13px; color: var(--ink-2); line-height: 1.8;
+  }
+  #drop-zone:hover, #drop-zone.dragging { border-color: var(--blue); background: rgba(57,135,229,.07); }
+  #drop-zone b { color: var(--ink); }
+  #drop-files { margin-top: 14px; font-size: 12px; line-height: 1.7; min-height: 40px; }
+  .file-ok { color: var(--green); }
+  .file-wait { color: var(--ink-mute); }
+  .file-err { color: var(--red); }
+  #btn-demo {
+    margin-top: 18px; background: var(--surface-2); color: var(--ink-2);
+    border: 1px solid var(--hairline); border-radius: 8px; padding: 7px 16px;
+    font-size: 12px; cursor: pointer;
+  }
+  #btn-demo:hover { color: var(--ink); border-color: var(--ink-mute); }
+
+  /* ── 서버 실행 패널 ─────────────────────────────────────────────── */
+  #server-panel { display: none; margin-top: 16px; text-align: left; }
+  .sp-divider {
+    display: flex; align-items: center; gap: 10px; color: var(--ink-mute);
+    font-size: 11px; margin-bottom: 10px;
+  }
+  .sp-divider::before, .sp-divider::after {
+    content: ""; flex: 1; height: 1px; background: var(--hairline);
+  }
+  .sp-row { display: flex; align-items: center; gap: 8px; }
+  #sp-prob {
+    flex: 1; background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--hairline); border-radius: 8px; padding: 7px 9px; font-size: 12.5px;
+  }
+  #sp-time {
+    width: 74px; background: var(--surface-2); color: var(--ink);
+    border: 1px solid var(--hairline); border-radius: 8px; padding: 7px 9px;
+    font-size: 12.5px; font-variant-numeric: tabular-nums;
+  }
+  .sp-unit { color: var(--ink-mute); font-size: 12px; }
+  #sp-run {
+    background: var(--blue-deep); color: #fff; border: 1px solid var(--blue);
+    border-radius: 8px; padding: 7px 15px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  #sp-run:hover { background: var(--blue); }
+  #sp-run:disabled { opacity: .45; cursor: default; }
+  #sp-progress { margin-top: 12px; }
+  #sp-bar-track {
+    height: 7px; border-radius: 4px; background: var(--surface-2);
+    border: 1px solid var(--hairline); overflow: hidden;
+  }
+  #sp-bar {
+    height: 100%; width: 0%; border-radius: 4px;
+    background: linear-gradient(90deg, var(--blue-deep), var(--blue));
+    transition: width .8s linear;
+  }
+  #sp-status-line {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 7px; font-size: 11.5px; color: var(--ink-2);
+  }
+  #sp-cancel {
+    background: none; color: var(--ink-mute); border: 1px solid var(--hairline);
+    border-radius: 6px; padding: 2px 10px; font-size: 11px; cursor: pointer;
+  }
+  #sp-cancel:hover { color: var(--red); border-color: var(--red-deep); }
+  #sp-error { margin-top: 8px; font-size: 11.5px; color: var(--red); white-space: pre-wrap; }
+  #drop-overlay.mini {
+    inset: auto; /* 로드 후에는 숨김 */
+    display: none;
+  }
+  body.drag-anywhere::after {
+    content: "JSON 파일을 놓으면 불러옵니다";
+    position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+    background: rgba(13,13,13,.72); font-size: 17px; color: var(--ink);
+    border: 2px dashed var(--blue); border-radius: 4px;
+  }
+  #toast {
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 60;
+    background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 9px;
+    padding: 8px 16px; font-size: 12.5px; color: var(--ink); display: none; box-shadow: var(--shadow);
+  }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<!-- 초기 로드 화면 -->
+<div id="drop-overlay">
+  <div id="drop-card" class="card">
+    <h1>OGC 2026 · Bay 배치 3D 뷰어</h1>
+    <p class="sub">문제 JSON과 솔루션 JSON을 넣으면 bay별·날짜별 배치를 입체로 보여줍니다</p>
+    <div id="drop-zone">
+      <b>여기에 파일을 드래그</b>하거나 클릭해서 선택<br>
+      <span style="font-size:12px">
+        문제: <code>train/prob_N.json</code> &nbsp;·&nbsp;
+        솔루션: <code>{"operations": …}</code> 또는 deep6h 압축형<br>
+        (두 파일을 한꺼번에 놓아도 자동 인식)
+      </span>
+    </div>
+    <input type="file" id="file-input" accept=".json" multiple hidden>
+    <div id="drop-files">
+      <div id="st-prob" class="file-wait">◻ 문제 파일 대기 중</div>
+      <div id="st-sol" class="file-wait">◻ 솔루션 파일 대기 중</div>
+    </div>
+    <!-- 서버 모드(python viz/serve.py로 열었을 때)에서만 표시 -->
+    <div id="server-panel">
+      <div class="sp-divider"><span>또는 서버에서 바로 실행</span></div>
+      <div class="sp-row">
+        <select id="sp-prob"></select>
+        <input type="number" id="sp-time" value="600" min="10" max="3600" step="10" title="timelimit (초)">
+        <span class="sp-unit">초</span>
+        <button id="sp-run">솔버 실행</button>
+      </div>
+      <div id="sp-progress" style="display:none">
+        <div id="sp-bar-track"><div id="sp-bar"></div></div>
+        <div id="sp-status-line">
+          <span id="sp-status-text"></span>
+          <button id="sp-cancel">중단</button>
+        </div>
+      </div>
+      <div id="sp-error"></div>
+    </div>
+    <button id="btn-demo">파일 없이 데모 보기</button>
+  </div>
+</div>
+
+<!-- HUD -->
+<div id="hud-top-left" class="card" style="display:none">
+  <h1 id="title-line">OGC 뷰어 <span></span></h1>
+  <div id="file-status"></div>
+  <div id="obj-row"></div>
+  <button id="btn-reload">다른 파일 열기</button>
+</div>
+
+<div id="hud-bays" class="card" style="display:none">
+  <button class="nav-btn" id="bay-prev" title="이전 bay ( [ )">‹</button>
+  <div id="bay-chips"></div>
+  <button class="nav-btn" id="bay-next" title="다음 bay ( ] )">›</button>
+</div>
+
+<div id="hud-right" class="card">
+  <h2>Day 요약 — <span id="stats-bay-label"></span></h2>
+  <div id="day-stats"></div>
+  <h2>오늘 이벤트</h2>
+  <div id="events"></div>
+  <div id="sel-detail">
+    <div id="sel-title"><span id="sel-swatch"></span><span id="sel-name"></span></div>
+    <table id="sel-table"></table>
+  </div>
+</div>
+
+<div id="hud-bottom" class="card">
+  <div id="tl-row">
+    <button id="btn-play" title="재생/일시정지 (Space)">▶</button>
+    <div id="tl-slider-wrap">
+      <canvas id="spark"></canvas>
+      <input type="range" id="day-slider" min="0" max="1" step="1" value="0">
+    </div>
+    <div id="day-label"><b>Day 0</b><span></span></div>
+  </div>
+  <div id="tl-opts">
+    <label>속도
+      <select id="speed">
+        <option value="2">2 일/초</option>
+        <option value="5" selected>5 일/초</option>
+        <option value="12">12 일/초</option>
+        <option value="30">30 일/초</option>
+      </select>
+    </label>
+    <label>색
+      <select id="color-mode">
+        <option value="identity" selected>블록 식별</option>
+        <option value="urgency">납기 여유</option>
+      </select>
+    </label>
+    <span id="legend-urgency">여유 <span class="lg-ramp"></span> 지각</span>
+    <label><input type="checkbox" id="chk-labels"> ID 표시</label>
+    <label>층 높이 <input type="range" id="height-scale" min="0.5" max="3" step="0.1" value="1.2" style="width:80px"></label>
+    <span id="kbd-hint"><kbd>←</kbd><kbd>→</kbd> 날짜 · <kbd>[</kbd><kbd>]</kbd> bay · <kbd>Space</kbd> 재생</span>
+  </div>
+</div>
+
+<div id="tooltip" class="card"></div>
+<div id="toast"></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ══════════════════════════════════════════════════════════════════════
+   1. 데이터 모델
+   문제:   { bays:[{width,height}], blocks:[{release_time,due_date,processing_time,
+             workload,bay_preferences,shape:[{orientation,layers:[[[x,y]…]…]}…]}], weights }
+   솔루션: {"operations": {"<day>": [{type:ENTRY|EXIT, block_id, bay_id, x,y,orient_idx}]}}
+           또는 deep6h 압축형 {prob, entry[], exit_[], bay[], coords[[x,y]], orient[]}
+   상주 규칙: entry ≤ day < exit  (checker와 동일)
+   배치 기준점: 해당 orientation 첫 layer의 첫 정점이 (x, y)에 오도록 전 layer 동일 평행이동
+══════════════════════════════════════════════════════════════════════ */
+
+const state = {
+  prob: null, probName: '', solName: '',
+  asg: [],          // block_id 순: {bay,x,y,orient,entry,exit} | null(미배치)
+  bayIdx: 0, day: 0, dayMin: 0, dayMax: 1,
+  playing: false, colorMode: 'identity', showLabels: false, layerH: 1.2,
+  selected: null, hovered: null,
+  perBayBlocks: [], residentsSeries: [],   // bay별 배정 블록 목록 / 일자별 상주 수
+  obj: null,
+};
+
+function detectKind(json) {
+  if (json && json.blocks && json.bays) return 'prob';
+  if (json && json.operations) return 'sol-ops';
+  if (json && json.entry && json.bay && json.coords) return 'sol-deep6h';
+  if (json && json.prob_info && json.solution) return 'combined';
+  return null;
+}
+
+function parseSolution(json) {
+  // → {bid: {bay,x,y,orient,entry,exit}}
+  const map = new Map();
+  if (json.operations) {
+    for (const [tStr, ops] of Object.entries(json.operations)) {
+      const t = parseInt(tStr, 10);
+      for (const op of ops) {
+        const bid = op.block_id;
+        if (op.type === 'ENTRY') {
+          const rec = map.get(bid) || {};
+          Object.assign(rec, { bay: op.bay_id, x: op.x ?? 0, y: op.y ?? 0,
+                               orient: op.orient_idx ?? 0, entry: t });
+          map.set(bid, rec);
+        } else if (op.type === 'EXIT') {
+          const rec = map.get(bid) || {};
+          rec.exit = t; map.set(bid, rec);
+        }
+      }
+    }
+  } else if (json.entry && json.coords) {
+    const n = json.entry.length;
+    for (let i = 0; i < n; i++) {
+      map.set(i, { bay: json.bay[i], x: json.coords[i][0], y: json.coords[i][1],
+                   orient: (json.orient ? json.orient[i] : 0) || 0,
+                   entry: json.entry[i], exit: (json.exit_ || json.exit)[i] });
+    }
+  }
+  return map;
+}
+
+function buildModel() {
+  const prob = state.prob, solMap = state.solMapTmp;
+  const n = prob.blocks.length;
+  state.asg = new Array(n).fill(null);
+  for (const [bid, rec] of solMap) {
+    if (bid >= 0 && bid < n && rec.entry != null && rec.exit != null) state.asg[bid] = rec;
+  }
+  // day 범위
+  let lo = Infinity, hi = -Infinity;
+  for (const a of state.asg) if (a) { lo = Math.min(lo, a.entry); hi = Math.max(hi, a.exit); }
+  if (!isFinite(lo)) { lo = 0; hi = 1; }
+  state.dayMin = Math.floor(lo); state.dayMax = Math.ceil(hi); state.day = state.dayMin;
+  // bay별 블록
+  state.perBayBlocks = prob.bays.map(() => []);
+  state.asg.forEach((a, bid) => { if (a && state.perBayBlocks[a.bay]) state.perBayBlocks[a.bay].push(bid); });
+  // bay별 일자 상주 시계열 (sparkline·chip)
+  const D = state.dayMax - state.dayMin + 1;
+  state.residentsSeries = prob.bays.map(() => new Float32Array(D));
+  state.asg.forEach((a) => {
+    if (!a || !state.residentsSeries[a.bay]) return;
+    const s = Math.max(state.dayMin, a.entry), e = Math.min(state.dayMax, a.exit);
+    for (let t = s; t < e; t++) state.residentsSeries[a.bay][t - state.dayMin]++;
+  });
+  computeObjective();
+}
+
+function computeObjective() {
+  const prob = state.prob, w = prob.weights || {};
+  let z1 = 0, z3 = 0;
+  const loads = prob.bays.map(() => 0);
+  const areas = prob.bays.map(b => b.width * b.height);
+  const meanA = areas.reduce((a, b) => a + b, 0) / areas.length;
+  state.asg.forEach((a, bid) => {
+    if (!a) return;
+    const blk = prob.blocks[bid];
+    z1 += Math.max(0, a.exit - blk.due_date);
+    loads[a.bay] += blk.workload || 0;
+    const prefs = blk.bay_preferences || [];
+    if (prefs.length) z3 += Math.max(...prefs) - (prefs[a.bay] ?? 0);
+  });
+  const u = areas.map(A => meanA / A);
+  const norm = loads.map((L, j) => u[j] * L);
+  // 채점기(utils.py)와 동일: max pair 격차에 floor 적용
+  const z2 = prob.bays.length > 1 ? Math.floor(Math.max(...norm) - Math.min(...norm)) : 0;
+  const total = (w.w1 || 0) * z1 + (w.w2 || 0) * z2 + (w.w3 || 0) * z3;
+  const placed = state.asg.filter(Boolean).length;
+  state.obj = { z1, z2, z3, total, placed, n: prob.blocks.length };
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. 색 — 식별(golden-angle 고정 hue, 블록에 귀속) / 납기 여유(diverging)
+══════════════════════════════════════════════════════════════════════ */
+function identityColor(bid) {
+  const h = (bid * 137.508) % 360;
+  const s = 0.58 + 0.10 * ((bid * 7) % 3) / 2;      // 0.58~0.68
+  const l = 0.56 + 0.09 * ((bid * 5) % 4) / 3;      // 0.56~0.65
+  return new THREE.Color().setHSL(h / 360, s, l);
+}
+const C_BLUE = new THREE.Color('#3987e5'), C_MID = new THREE.Color('#9a9994'),
+      C_RED = new THREE.Color('#e66767'), C_REDD = new THREE.Color('#d03b3b');
+function urgencyColor(bid, day) {
+  // slack = 납기 − 오늘. +8일 이상 여유=파랑 → 0일=중립 회색 → 지각 진행=빨강
+  const a = state.asg[bid], blk = state.prob.blocks[bid];
+  const slack = blk.due_date - day;
+  const c = new THREE.Color();
+  if (slack >= 0) c.lerpColors(C_MID, C_BLUE, Math.min(1, slack / 8));
+  else            c.lerpColors(C_RED, C_REDD, Math.min(1, (-slack) / 10)).lerp(C_MID, Math.max(0, 1 + slack / 2) * 0.5);
+  return c;
+}
+function blockColor(bid) {
+  return state.colorMode === 'identity' ? identityColor(bid) : urgencyColor(bid, state.day);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. Three.js 씬
+   좌표계: bay (x,y) → world (x, 층높이, −y).  bay는 x∈[0,W], z∈[−H,0].
+══════════════════════════════════════════════════════════════════════ */
+const stageEl = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+stageEl.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#0d0f14');
+scene.fog = new THREE.Fog('#0d0f14', 90, 340);
+
+const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 2000);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.maxPolarAngle = Math.PI * 0.495;
+
+const hemi = new THREE.HemisphereLight('#bcd4ff', '#1a1611', 0.85);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight('#fff2dd', 2.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+scene.add(sun);
+const fill = new THREE.DirectionalLight('#6f8fc9', 0.5);
+scene.add(fill);
+
+let bayEnv = null;                 // 바닥/그리드/벽 그룹
+const bayCache = new Map();        // bayIdx → {group, blocks: Map(bid→{group,meshes,label})}
+let labelSprites = [];
+
+function disposeGroup(g) {
+  g.traverse(o => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+      if (m.map) m.map.dispose(); m.dispose();
+    });
+  });
+}
+
+function buildBayEnv(W, H) {
+  if (bayEnv) { scene.remove(bayEnv); disposeGroup(bayEnv); }
+  bayEnv = new THREE.Group();
+
+  // 넓은 지면
+  const groundMat = new THREE.MeshStandardMaterial({ color: '#12141a', roughness: 1 });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), groundMat);
+  ground.rotation.x = -Math.PI / 2; ground.position.set(W / 2, -0.06, -H / 2);
+  ground.receiveShadow = true;
+  bayEnv.add(ground);
+
+  // bay 바닥판
+  const floorMat = new THREE.MeshStandardMaterial({ color: '#1d2027', roughness: 0.92, metalness: 0.05 });
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(W, 0.12, H), floorMat);
+  floor.position.set(W / 2, -0.06 + 0.06, -H / 2);
+  floor.receiveShadow = true;
+  bayEnv.add(floor);
+
+  // 1단위 그리드(희미) + 5단위(진하게)
+  const mk = (step, color, opacity) => {
+    const pts = [];
+    for (let x = 0; x <= W; x += step) pts.push(x, 0.075, 0, x, 0.075, -H);
+    for (let y = 0; y <= H; y += step) pts.push(0, 0.075, -y, W, 0.075, -y);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
+    return new THREE.LineSegments(geo, mat);
+  };
+  bayEnv.add(mk(1, '#3a3f4b', 0.22));
+  bayEnv.add(mk(5, '#4c5568', 0.4));
+
+  // 테두리 벽(낮은 립)
+  const rimMat = new THREE.MeshStandardMaterial({ color: '#2b3140', roughness: 0.8 });
+  const rimH = 0.5, rimT = 0.35;
+  const rims = [
+    [W + 2 * rimT, rimT, W / 2, rimT / 2 - rimT],       // 앞 (y=0 쪽, z=+)
+    [W + 2 * rimT, rimT, W / 2, -H - rimT / 2 + rimT],  // 뒤
+  ];
+  for (const [len, dep, cx, cz] of rims) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(len, rimH, dep), rimMat);
+    m.position.set(cx, rimH / 2, cz + (cz > -H / 2 ? rimT : 0) - (cz > -H / 2 ? 0 : 0));
+    m.castShadow = true; bayEnv.add(m);
+  }
+  for (const sx of [-rimT / 2, W + rimT / 2]) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(rimT, rimH, H + 2 * rimT), rimMat);
+    m.position.set(sx, rimH / 2, -H / 2);
+    m.castShadow = true; bayEnv.add(m);
+  }
+  scene.add(bayEnv);
+
+  // 조명 위치를 bay 크기에 맞춤
+  const R = Math.max(W, H);
+  sun.position.set(W / 2 + R * 0.7, R * 1.25, -H / 2 + R * 0.55);
+  sun.target.position.set(W / 2, 0, -H / 2);
+  scene.add(sun.target);
+  const cam = sun.shadow.camera;
+  cam.left = -R * 1.1; cam.right = R * 1.1; cam.top = R * 1.1; cam.bottom = -R * 1.1;
+  cam.near = 1; cam.far = R * 4; cam.updateProjectionMatrix();
+  fill.position.set(W / 2 - R, R * 0.6, -H / 2 - R * 0.4);
+  scene.fog.near = R * 3.2; scene.fog.far = R * 9;
+}
+
+function fitCamera(W, H) {
+  // 실제 FOV(수직·수평)에 맞춰 bay가 화면을 채우도록 거리 산출 — 길쭉한 bay 대응
+  const cx = W / 2, cz = -H / 2;
+  const vfov = camera.fov * Math.PI / 180;
+  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  const dist = Math.max(
+    (W * 0.68) / Math.tan(hfov / 2),
+    (H * 1.00) / Math.tan(vfov / 2),
+    Math.max(W, H) * 0.5, 22
+  );
+  const dir = new THREE.Vector3(0.05, 0.78, 1).normalize();
+  camera.position.set(cx + dir.x * dist, dir.y * dist, cz + dir.z * dist);
+  controls.target.set(cx, 1, cz);
+  controls.update();
+}
+
+function makeLabelSprite(text) {
+  const c = document.createElement('canvas');
+  const px = 44, pad = 14;
+  const ctx = c.getContext('2d');
+  ctx.font = `700 ${px}px system-ui, sans-serif`;
+  const w = Math.ceil(ctx.measureText(text).width) + pad * 2;
+  c.width = w; c.height = px + pad * 2;
+  const g = c.getContext('2d');
+  g.font = `700 ${px}px system-ui, sans-serif`;
+  g.fillStyle = 'rgba(10,10,12,0.72)';
+  g.beginPath(); g.roundRect(0, 0, c.width, c.height, 16); g.fill();
+  g.fillStyle = '#fff';
+  g.textBaseline = 'middle'; g.textAlign = 'center';
+  g.fillText(text, c.width / 2, c.height / 2 + 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true }));
+  const s = 0.022;
+  spr.scale.set(c.width * s, c.height * s, 1);
+  return spr;
+}
+
+function buildBlockGroup(bid) {
+  // 배치된 orientation의 layer들을 압출해 적층한 그룹 (로컬 = 기준점 원점)
+  const a = state.asg[bid], blk = state.prob.blocks[bid];
+  const orient = blk.shape[Math.min(a.orient, blk.shape.length - 1)];
+  const layers = orient.layers.filter(l => l && l.length >= 3);
+  const ref = layers.length ? layers[0][0] : [0, 0];
+  const group = new THREE.Group();
+  group.userData.bid = bid;
+  const meshes = [];
+  const lh = state.layerH;
+  layers.forEach((verts, k) => {
+    const shape = new THREE.Shape();
+    shape.moveTo(verts[0][0] - ref[0], verts[0][1] - ref[1]);
+    for (let i = 1; i < verts.length; i++) shape.lineTo(verts[i][0] - ref[0], verts[i][1] - ref[1]);
+    shape.closePath();
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: lh, bevelEnabled: false, curveSegments: 8 });
+    geo.rotateX(-Math.PI / 2);            // (x,y,z)→(x, z, −y): 압출축이 위로
+    geo.translate(0, k * lh, 0);
+    const mat = new THREE.MeshStandardMaterial({
+      color: blockColor(bid), roughness: 0.5, metalness: 0.08, transparent: true, opacity: 1,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    mesh.userData.bid = bid;
+    group.add(mesh); meshes.push(mesh);
+    // 윤곽선 — 층 구분/블록 경계 가독성
+    const edges = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo, 28),
+      new THREE.LineBasicMaterial({ color: '#0d0f14', transparent: true, opacity: 0.55 })
+    );
+    edges.userData.isEdge = true;
+    group.add(edges);
+  });
+  // 레이블
+  const bb = new THREE.Box3().setFromObject(group);
+  const label = makeLabelSprite('#' + bid);
+  label.position.set((bb.min.x + bb.max.x) / 2, bb.max.y + 1.1, (bb.min.z + bb.max.z) / 2);
+  label.visible = state.showLabels;
+  group.add(label);
+  group.position.set(a.x, 0, -a.y);
+  return { group, meshes, label };
+}
+
+function getBaySceneData(bayIdx) {
+  if (bayCache.has(bayIdx)) return bayCache.get(bayIdx);
+  const g = new THREE.Group();
+  const blocks = new Map();
+  for (const bid of state.perBayBlocks[bayIdx]) {
+    const b = buildBlockGroup(bid);
+    b.group.visible = false;
+    blocks.set(bid, b);
+    g.add(b.group);
+  }
+  const data = { group: g, blocks };
+  bayCache.set(bayIdx, data);
+  return data;
+}
+
+function clearBayCache() {
+  for (const { group } of bayCache.values()) { scene.remove(group); disposeGroup(group); }
+  bayCache.clear();
+}
+
+/* ── 등장 애니메이션 ── */
+const anims = [];
+function spawnAnim(group, targetY = 0) {
+  group.position.y = 14; group.userData._animDrop = true;
+  anims.push({ group, from: 14, to: targetY, t0: performance.now(), dur: 420 });
+}
+function stepAnims(now) {
+  for (let i = anims.length - 1; i >= 0; i--) {
+    const a = anims[i];
+    const t = Math.min(1, (now - a.t0) / a.dur);
+    const e = 1 - Math.pow(1 - t, 3);
+    a.group.position.y = a.from + (a.to - a.from) * e;
+    if (t >= 1) { a.group.userData._animDrop = false; anims.splice(i, 1); }
+  }
+}
+
+/* ── 표시 갱신 ── */
+let currentBayData = null;
+let prevVisible = new Set();
+
+function switchBay(idx, refit = true) {
+  const nb = state.prob.bays.length;
+  state.bayIdx = ((idx % nb) + nb) % nb;
+  if (currentBayData) scene.remove(currentBayData.group);
+  const bay = state.prob.bays[state.bayIdx];
+  buildBayEnv(bay.width, bay.height);
+  currentBayData = getBaySceneData(state.bayIdx);
+  scene.add(currentBayData.group);
+  prevVisible = new Set();
+  if (refit) fitCamera(bay.width, bay.height);
+  updateDay(state.day, false);
+  renderBayChips();
+  drawSparkline();
+}
+
+function updateDay(day, animate = true) {
+  state.day = Math.max(state.dayMin, Math.min(state.dayMax, Math.round(day)));
+  const vis = new Set();
+  if (currentBayData) {
+    for (const [bid, b] of currentBayData.blocks) {
+      const a = state.asg[bid];
+      const resident = a.entry <= state.day && state.day < a.exit;
+      if (resident) vis.add(bid);
+      if (resident && !b.group.visible) {
+        b.group.visible = true;
+        if (animate && !prevVisible.has(bid)) spawnAnim(b.group);
+        else b.group.position.y = 0;
+      } else if (!resident && b.group.visible) {
+        b.group.visible = false;
+      }
+      if (resident) applyBlockAppearance(bid, b);
+    }
+  }
+  prevVisible = vis;
+  ui.daySlider.value = state.day;
+  ui.dayLabel.querySelector('b').textContent = 'Day ' + state.day;
+  ui.dayLabel.querySelector('span').textContent = `${state.dayMin} ~ ${state.dayMax}`;
+  renderDayPanel();
+  drawSparkCursor();
+}
+
+function applyBlockAppearance(bid, b) {
+  const col = blockColor(bid);
+  const isSel = state.selected === bid, hasSel = state.selected != null;
+  const isHov = state.hovered === bid;
+  const a = state.asg[bid];
+  const lastDay = a.exit - 1 === state.day;   // 오늘이 마지막 날 → 내일 반출
+  for (const mesh of b.meshes) {
+    mesh.material.color.copy(col);
+    mesh.material.opacity = hasSel && !isSel ? 0.18 : 1;
+    mesh.material.emissive.set(isSel ? '#ffffff' : isHov ? '#ffffff' : lastDay ? '#c98500' : '#000000');
+    mesh.material.emissiveIntensity = isSel ? 0.22 : isHov ? 0.12 : lastDay ? 0.13 : 0;
+  }
+  b.group.children.forEach(ch => {
+    if (ch.userData.isEdge) ch.material.opacity = hasSel && !isSel ? 0.06 : 0.55;
+  });
+  b.label.visible = state.showLabels || isSel || isHov;
+}
+
+function refreshAppearances() {
+  if (!currentBayData) return;
+  for (const [bid, b] of currentBayData.blocks)
+    if (b.group.visible) applyBlockAppearance(bid, b);
+}
+
+function rebuildAllGeometry() {   // 층 높이 변경 시
+  clearBayCache();
+  currentBayData = null;
+  switchBay(state.bayIdx, false);
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   4. UI
+══════════════════════════════════════════════════════════════════════ */
+const $ = id => document.getElementById(id);
+const ui = {
+  overlay: $('drop-overlay'), dropZone: $('drop-zone'), fileInput: $('file-input'),
+  stProb: $('st-prob'), stSol: $('st-sol'),
+  hudTL: $('hud-top-left'), hudBays: $('hud-bays'), hudRight: $('hud-right'), hudBottom: $('hud-bottom'),
+  titleLine: $('title-line'), fileStatus: $('file-status'), objRow: $('obj-row'),
+  bayChips: $('bay-chips'), daySlider: $('day-slider'), dayLabel: $('day-label'),
+  btnPlay: $('btn-play'), spark: $('spark'), events: $('events'),
+  dayStats: $('day-stats'), statsBayLabel: $('stats-bay-label'),
+  selDetail: $('sel-detail'), selName: $('sel-name'), selSwatch: $('sel-swatch'), selTable: $('sel-table'),
+  tooltip: $('tooltip'), toast: $('toast'),
+};
+
+function toast(msg, err = false) {
+  ui.toast.textContent = msg;
+  ui.toast.style.borderColor = err ? 'var(--red-deep)' : 'var(--hairline)';
+  ui.toast.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => ui.toast.style.display = 'none', 2600);
+}
+
+/* ── 파일 로드 ── */
+let pendingProb = null, pendingSol = null;
+
+async function handleFiles(files) {
+  for (const f of files) {
+    let json;
+    try { json = JSON.parse(await f.text()); }
+    catch { toast(`${f.name}: JSON 파싱 실패`, true); continue; }
+    const kind = detectKind(json);
+    if (kind === 'prob') {
+      pendingProb = { json, name: f.name };
+      ui.stProb.className = 'file-ok';
+      ui.stProb.textContent = `✔ 문제: ${f.name} (블록 ${json.blocks.length} · bay ${json.bays.length})`;
+    } else if (kind === 'sol-ops' || kind === 'sol-deep6h') {
+      pendingSol = { json, name: f.name };
+      const hint = json.prob ? ` — ${json.prob}용` : '';
+      ui.stSol.className = 'file-ok';
+      ui.stSol.textContent = `✔ 솔루션: ${f.name}${hint}`;
+    } else if (kind === 'combined') {
+      pendingProb = { json: json.prob_info, name: f.name + ' (prob_info)' };
+      pendingSol = { json: json.solution, name: f.name + ' (solution)' };
+      ui.stProb.className = ui.stSol.className = 'file-ok';
+      ui.stProb.textContent = `✔ 문제: ${f.name} 내장`;
+      ui.stSol.textContent = `✔ 솔루션: ${f.name} 내장`;
+    } else {
+      toast(`${f.name}: 형식을 인식하지 못함`, true);
+    }
+  }
+  if (pendingProb && pendingSol) loadAll();
+}
+
+function loadAll() {
+  try {
+    state.prob = pendingProb.json;
+    state.probName = pendingProb.name.replace(/\.json.*/, '');
+    state.solName = pendingSol.name;
+    state.solMapTmp = parseSolution(pendingSol.json);
+    buildModel();
+    clearBayCache(); currentBayData = null;
+    state.selected = null; state.hovered = null; state.playing = false;
+    ui.btnPlay.textContent = '▶';
+    ui.daySlider.min = state.dayMin; ui.daySlider.max = state.dayMax;
+    ui.overlay.style.display = 'none';
+    ui.hudTL.style.display = ui.hudBays.style.display = 'block';
+    ui.hudRight.style.display = 'block';
+    ui.hudBottom.style.display = 'flex';
+    renderHeader();
+    switchBay(0);
+    const un = state.obj.n - state.obj.placed;
+    toast(`로드 완료 — 블록 ${state.obj.placed}/${state.obj.n}${un ? ` (미배치 ${un})` : ''}, Day ${state.dayMin}~${state.dayMax}`);
+  } catch (e) {
+    console.error(e);
+    toast('로드 실패: ' + e.message, true);
+  }
+}
+
+function renderHeader() {
+  ui.titleLine.innerHTML = `${state.probName} <span>· ${escapeHtml(state.solName)}</span>`;
+  const w = state.prob.weights || {};
+  ui.fileStatus.innerHTML =
+    `블록 <b>${state.obj.placed}</b>/${state.obj.n} 배치 · bay ${state.prob.bays.length}개 · ` +
+    `w=(${fmt(w.w1)}, ${fmt(w.w2)}, ${fmt(w.w3)})`;
+  const o = state.obj;
+  ui.objRow.innerHTML =
+    chip('총 목적함수', fmt(o.total), true) +
+    chip('Z1 지연', fmt(o.z1)) + chip('Z2 불균형', fmt(o.z2, 1)) + chip('Z3 선호', fmt(o.z3));
+  function chip(k, v, tot) { return `<div class="obj-chip${tot ? ' total' : ''}">${k}<b>${v}</b></div>`; }
+}
+
+function fmt(v, d = 0) {
+  if (v == null) return '–';
+  return Number(v).toLocaleString('en-US', { maximumFractionDigits: d });
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/* ── bay chips ── */
+function renderBayChips() {
+  const t = state.day - state.dayMin;
+  ui.bayChips.innerHTML = state.prob.bays.map((b, j) => {
+    const cnt = state.residentsSeries[j] ? state.residentsSeries[j][t] | 0 : 0;
+    return `<div class="bay-chip${j === state.bayIdx ? ' active' : ''}" data-bay="${j}">
+      Bay ${j} <span style="color:var(--ink-mute)">${b.width}×${b.height}</span><b>${cnt}개</b></div>`;
+  }).join('');
+  ui.bayChips.querySelectorAll('.bay-chip').forEach(el =>
+    el.addEventListener('click', () => switchBay(+el.dataset.bay)));
+}
+
+/* ── Day 패널 ── */
+function renderDayPanel() {
+  const j = state.bayIdx, day = state.day;
+  ui.statsBayLabel.textContent = `Bay ${j}`;
+  const bay = state.prob.bays[j];
+  let resident = 0, tardyNow = 0, areaSum = 0, ins = [], outs = [];
+  for (const bid of state.perBayBlocks[j]) {
+    const a = state.asg[bid];
+    if (a.entry === day) ins.push(bid);
+    if (a.exit === day) outs.push(bid);
+    if (a.entry <= day && day < a.exit) {
+      resident++;
+      if (day > state.prob.blocks[bid].due_date) tardyNow++;
+      areaSum += footprintArea(bid);
+    }
+  }
+  const util = Math.min(100, 100 * areaSum / (bay.width * bay.height));
+  ui.dayStats.innerHTML =
+    stat(resident, '상주 블록') +
+    stat(util.toFixed(0) + '%', '점유율(근사)') +
+    stat(ins.length + ' / ' + outs.length, '오늘 IN / OUT') +
+    stat(tardyNow, '납기 초과 중', tardyNow > 0);
+  function stat(v, k, warn) { return `<div class="stat"><b class="${warn ? 'warn' : ''}">${v}</b><span>${k}</span></div>`; }
+  const li = (bid, cls, tag) =>
+    `<span class="${cls}">${tag}</span> <span class="blk-link" data-bid="${bid}">#${bid}</span>`;
+  const rows = [
+    ...ins.map(b => li(b, 'ev-in', 'IN ')),
+    ...outs.map(b => li(b, 'ev-out', 'OUT')),
+  ];
+  ui.events.innerHTML = rows.length ? rows.join('<br>') : '<span style="color:var(--ink-mute)">이벤트 없음</span>';
+  ui.events.querySelectorAll('.blk-link').forEach(el =>
+    el.addEventListener('click', () => selectBlock(+el.dataset.bid)));
+  renderBayChips();
+}
+
+const _fpCache = new Map();
+function footprintArea(bid) {
+  if (_fpCache.has(bid)) return _fpCache.get(bid);
+  const a = state.asg[bid], blk = state.prob.blocks[bid];
+  const layers = blk.shape[Math.min(a.orient, blk.shape.length - 1)].layers;
+  let best = 0;
+  for (const l of layers) {
+    let s = 0;
+    for (let i = 0; i < l.length; i++) {
+      const [x1, y1] = l[i], [x2, y2] = l[(i + 1) % l.length];
+      s += x1 * y2 - x2 * y1;
+    }
+    best = Math.max(best, Math.abs(s) / 2);
+  }
+  _fpCache.set(bid, best);
+  return best;
+}
+
+/* ── 선택/툴팁 ── */
+function selectBlock(bid) {
+  state.selected = state.selected === bid ? null : bid;
+  refreshAppearances();
+  if (state.selected == null) { ui.selDetail.style.display = 'none'; return; }
+  const blk = state.prob.blocks[bid], a = state.asg[bid];
+  const late = a.exit - blk.due_date;
+  ui.selDetail.style.display = 'block';
+  ui.selName.textContent = `블록 #${bid}`;
+  ui.selSwatch.style.background = '#' + blockColor(bid).getHexString();
+  ui.selTable.innerHTML = [
+    ['bay', 'Bay ' + a.bay], ['위치 (x, y)', `(${a.x}, ${a.y})`], ['orientation', a.orient],
+    ['ENTRY → EXIT', `${a.entry} → ${a.exit}`],
+    ['release / due', `${blk.release_time} / ${blk.due_date}`],
+    ['processing', blk.processing_time], ['workload', fmt(blk.workload)],
+    ['지각', late > 0 ? `+${late}일 지각` : '정시'],
+  ].map(([k, v]) => `<tr><td>${k}</td><td${k === '지각' && late > 0 ? ' style="color:var(--red)"' : ''}>${v}</td></tr>`).join('');
+}
+
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let pointerClient = { x: 0, y: 0 };
+let pointerActive = false;   // 첫 마우스 이동 전에는 유령 hover 방지
+
+renderer.domElement.addEventListener('pointermove', e => {
+  pointerActive = true;
+  pointerClient = { x: e.clientX, y: e.clientY };
+  pointer.x = (e.clientX / innerWidth) * 2 - 1;
+  pointer.y = -(e.clientY / innerHeight) * 2 + 1;
+});
+renderer.domElement.addEventListener('click', e => {
+  if (e.detail === 0) return;
+  if (state.hovered != null) selectBlock(state.hovered);
+  else if (state.selected != null) { state.selected = null; ui.selDetail.style.display = 'none'; refreshAppearances(); }
+});
+
+function updateHover() {
+  if (!currentBayData || !pointerActive) return;
+  raycaster.setFromCamera(pointer, camera);
+  const meshes = [];
+  for (const [bid, b] of currentBayData.blocks)
+    if (b.group.visible) meshes.push(...b.meshes);
+  const hits = raycaster.intersectObjects(meshes, false);
+  const bid = hits.length ? hits[0].object.userData.bid : null;
+  if (bid !== state.hovered) {
+    state.hovered = bid;
+    refreshAppearances();
+    renderer.domElement.style.cursor = bid != null ? 'pointer' : 'default';
+  }
+  if (bid != null) {
+    const blk = state.prob.blocks[bid], a = state.asg[bid];
+    const late = a.exit - blk.due_date;
+    const slack = blk.due_date - state.day;
+    ui.tooltip.style.display = 'block';
+    ui.tooltip.innerHTML =
+      `<b>블록 #${bid}</b> <span class="mut">(${a.x}, ${a.y}) · o${a.orient}</span><br>` +
+      `ENTRY ${a.entry} → EXIT ${a.exit} <span class="mut">· due ${blk.due_date}</span><br>` +
+      (late > 0 ? `<span class="tt-late">최종 +${late}일 지각</span>` : `<span class="tt-ok">정시 반출</span>`) +
+      ` <span class="mut">· 오늘 기준 여유 ${slack}일</span>`;
+    const tw = ui.tooltip.offsetWidth, th = ui.tooltip.offsetHeight;
+    ui.tooltip.style.left = Math.min(innerWidth - tw - 10, pointerClient.x + 16) + 'px';
+    ui.tooltip.style.top = Math.min(innerHeight - th - 10, pointerClient.y + 14) + 'px';
+  } else {
+    ui.tooltip.style.display = 'none';
+  }
+}
+
+/* ── 스파크라인 (현재 bay 상주 수) ── */
+function drawSparkline() {
+  const cv = ui.spark, ctx = cv.getContext('2d');
+  const w = cv.clientWidth, h = cv.clientHeight, dpr = Math.min(devicePixelRatio, 2);
+  cv.width = w * dpr; cv.height = h * dpr; ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  const s = state.residentsSeries[state.bayIdx];
+  if (!s || !s.length) return;
+  const max = Math.max(1, ...s);
+  const D = s.length, pad = 2;
+  const X = i => D <= 1 ? w / 2 : pad + (w - 2 * pad) * i / (D - 1);
+  const Y = v => h - 3 - (h - 10) * v / max;
+  ctx.beginPath();
+  ctx.moveTo(X(0), h - 3);
+  for (let i = 0; i < D; i++) ctx.lineTo(X(i), Y(s[i]));
+  ctx.lineTo(X(D - 1), h - 3); ctx.closePath();
+  ctx.fillStyle = 'rgba(57,135,229,0.20)';
+  ctx.fill();
+  ctx.beginPath();
+  for (let i = 0; i < D; i++) i ? ctx.lineTo(X(i), Y(s[i])) : ctx.moveTo(X(i), Y(s[i]));
+  ctx.strokeStyle = '#3987e5'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.strokeStyle = '#383835'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h - 2.5); ctx.lineTo(w, h - 2.5); ctx.stroke();
+  drawSparkCursor._base = ctx.getImageData(0, 0, cv.width, cv.height);
+  drawSparkCursor();
+}
+function drawSparkCursor() {
+  const cv = ui.spark, ctx = cv.getContext('2d');
+  if (!drawSparkCursor._base) return;
+  ctx.putImageData(drawSparkCursor._base, 0, 0);
+  // 커서 위치는 range thumb이 이미 표시 — 현재값 텍스트만
+  const s = state.residentsSeries[state.bayIdx];
+  if (!s) return;
+  const v = s[state.day - state.dayMin] | 0;
+  ctx.save();
+  ctx.scale(Math.min(devicePixelRatio, 2), Math.min(devicePixelRatio, 2));
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.fillStyle = '#898781';
+  ctx.textAlign = 'right';
+  ctx.fillText(`상주 ${v}`, cv.clientWidth - 4, 10);
+  ctx.restore();
+}
+
+/* ── 이벤트 바인딩 ── */
+ui.dropZone.addEventListener('click', () => ui.fileInput.click());
+ui.fileInput.addEventListener('change', e => handleFiles([...e.target.files]));
+ui.dropZone.addEventListener('dragover', e => { e.preventDefault(); ui.dropZone.classList.add('dragging'); });
+ui.dropZone.addEventListener('dragleave', () => ui.dropZone.classList.remove('dragging'));
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  document.body.classList.remove('drag-anywhere');
+  ui.dropZone.classList.remove('dragging');
+  if (e.dataTransfer?.files?.length) handleFiles([...e.dataTransfer.files]);
+});
+window.addEventListener('dragenter', e => {
+  if (ui.overlay.style.display === 'none' && e.dataTransfer?.types?.includes('Files'))
+    document.body.classList.add('drag-anywhere');
+});
+window.addEventListener('dragleave', e => {
+  if (e.relatedTarget === null) document.body.classList.remove('drag-anywhere');
+});
+
+$('btn-reload').addEventListener('click', () => {
+  pendingProb = pendingSol = null;
+  ui.stProb.className = ui.stSol.className = 'file-wait';
+  ui.stProb.textContent = '◻ 문제 파일 대기 중';
+  ui.stSol.textContent = '◻ 솔루션 파일 대기 중';
+  ui.overlay.style.display = 'flex';
+});
+$('bay-prev').addEventListener('click', () => switchBay(state.bayIdx - 1));
+$('bay-next').addEventListener('click', () => switchBay(state.bayIdx + 1));
+ui.daySlider.addEventListener('input', e => updateDay(+e.target.value));
+ui.btnPlay.addEventListener('click', togglePlay);
+$('speed').addEventListener('change', () => {});
+$('color-mode').addEventListener('change', e => {
+  state.colorMode = e.target.value;
+  document.getElementById('legend-urgency').style.display =
+    state.colorMode === 'urgency' ? 'inline-flex' : 'none';
+  refreshAppearances();
+});
+$('chk-labels').addEventListener('change', e => { state.showLabels = e.target.checked; refreshAppearances(); });
+$('height-scale').addEventListener('change', e => { state.layerH = +e.target.value; _fpCache.clear(); rebuildAllGeometry(); });
+
+window.addEventListener('keydown', e => {
+  if (ui.overlay.style.display !== 'none' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') {
+    if (e.target.tagName !== 'BODY' && e.key !== ' ') return;
+  }
+  if (!state.prob) return;
+  if (e.key === 'ArrowRight') { updateDay(state.day + 1); e.preventDefault(); }
+  else if (e.key === 'ArrowLeft') { updateDay(state.day - 1); e.preventDefault(); }
+  else if (e.key === ']') switchBay(state.bayIdx + 1);
+  else if (e.key === '[') switchBay(state.bayIdx - 1);
+  else if (e.key === ' ') { togglePlay(); e.preventDefault(); }
+  else if (e.key === 'Escape' && state.selected != null) { selectBlock(state.selected); }
+});
+
+function togglePlay() {
+  state.playing = !state.playing;
+  ui.btnPlay.textContent = state.playing ? '⏸' : '▶';
+  playAccum = 0;
+}
+
+/* ── 메인 루프 ── */
+let lastT = performance.now(), playAccum = 0;
+function loop(now) {
+  requestAnimationFrame(loop);
+  const dt = Math.min(0.1, (now - lastT) / 1000);
+  lastT = now;
+  if (state.playing && state.prob) {
+    playAccum += dt * (+$('speed').value);
+    if (playAccum >= 1) {
+      const step = Math.floor(playAccum);
+      playAccum -= step;
+      if (state.day >= state.dayMax) { state.playing = false; ui.btnPlay.textContent = '▶'; }
+      else updateDay(state.day + step);
+    }
+  }
+  stepAnims(now);
+  if (state.prob) updateHover();
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  if (state.prob) drawSparkline();
+}
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(loop);
+
+/* ══════════════════════════════════════════════════════════════════════
+   4.5 서버 모드 — python viz/serve.py 로 열었을 때만 활성
+   /api/probs 응답이 오면 실행 패널을 보여주고, /api/run → /api/status 폴링
+   → /api/result 자동 로드.
+══════════════════════════════════════════════════════════════════════ */
+const sp = {
+  panel: $('server-panel'), prob: $('sp-prob'), time: $('sp-time'),
+  run: $('sp-run'), progress: $('sp-progress'), bar: $('sp-bar'),
+  statusText: $('sp-status-text'), cancel: $('sp-cancel'), error: $('sp-error'),
+};
+let spTimer = null, spLoadedOnce = false;
+
+async function spInit() {
+  if (!location.protocol.startsWith('http')) return;   // file://로 열면 패널 없음
+  let probs;
+  try {
+    const r = await fetch('/api/probs');
+    if (!r.ok) return;
+    probs = (await r.json()).probs;
+  } catch { return; }
+  sp.panel.style.display = 'block';
+  sp.prob.innerHTML = probs.map(p => `<option value="${p}">${p}</option>`).join('');
+  sp.run.addEventListener('click', spStart);
+  sp.cancel.addEventListener('click', spCancel);
+  spCheck();                                   // 새로고침 시 진행/완료 상태 복원
+}
+
+async function spStart() {
+  sp.error.textContent = '';
+  try {
+    const r = await fetch('/api/run', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prob: sp.prob.value, timelimit: +sp.time.value }),
+    });
+    const j = await r.json();
+    if (!j.ok) { sp.error.textContent = j.error || '실행 실패'; return; }
+    spLoadedOnce = false;
+    spCheck();
+  } catch (e) { sp.error.textContent = '서버 요청 실패: ' + e.message; }
+}
+
+async function spCancel() {
+  try { await fetch('/api/cancel', { method: 'POST', body: '{}' }); } catch {}
+  spSetIdle();
+}
+
+function spSetIdle() {
+  clearTimeout(spTimer); spTimer = null;
+  sp.run.disabled = false;
+  sp.progress.style.display = 'none';
+}
+
+async function spCheck() {
+  let st;
+  try { st = await (await fetch('/api/status')).json(); }
+  catch { sp.error.textContent = '서버 연결 끊김'; spSetIdle(); return; }
+  if (st.state === 'running') {
+    sp.run.disabled = true;
+    sp.progress.style.display = 'block';
+    const pct = Math.min(99, 100 * st.elapsed / (st.timelimit || 1));
+    sp.bar.style.width = pct.toFixed(1) + '%';
+    sp.statusText.textContent =
+      `${st.prob} · 4-워커 포트폴리오 실행 중 · ${Math.round(st.elapsed)}s / ${Math.round(st.timelimit)}s`;
+    spTimer = setTimeout(spCheck, 2000);
+  } else if (st.state === 'done') {
+    sp.bar.style.width = '100%';
+    spSetIdle();
+    if (!spLoadedOnce) { spLoadedOnce = true; await spLoadResult(); }
+  } else if (st.state === 'error') {
+    spSetIdle();
+    sp.error.textContent = '솔버 실패: ' + (st.error || '알 수 없음');
+  } else {
+    spSetIdle();
+  }
+}
+
+async function spLoadResult() {
+  try {
+    const j = await (await fetch('/api/result')).json();
+    const meta = j.meta || {};
+    pendingProb = { json: j.prob_info, name: meta.prob_file || 'prob' };
+    pendingSol = { json: j.solution, name: `서버 실행 T=${meta.timelimit || '?'}s` };
+    loadAll();
+    if (meta.wall_s) toast(`솔버 완료 (${meta.wall_s}s) — 시각화 로드됨`);
+  } catch (e) {
+    sp.error.textContent = '결과 로드 실패: ' + e.message;
+  }
+}
+spInit();
+
+/* ══════════════════════════════════════════════════════════════════════
+   5. 내장 데모 (파일 없이 확인용)
+══════════════════════════════════════════════════════════════════════ */
+$('btn-demo').addEventListener('click', () => {
+  const { prob, sol } = makeDemo();
+  pendingProb = { json: prob, name: 'demo_prob' };
+  pendingSol = { json: sol, name: 'demo_solution' };
+  loadAll();
+});
+
+function makeDemo() {
+  // 결정적 의사난수
+  let s = 42;
+  const rnd = () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const shapes = [
+    // 직사각형
+    (w, h) => [[[0, 0], [w, 0], [w, h], [0, h]]],
+    // L자
+    (w, h) => [[[0, 0], [w, 0], [w, h * 0.45], [w * 0.45, h * 0.45], [w * 0.45, h], [0, h]]],
+    // 2층: 아래 넓고 위 좁게
+    (w, h) => [
+      [[0, 0], [w, 0], [w, h], [0, h]],
+      [[w * 0.2, h * 0.15], [w * 0.85, h * 0.15], [w * 0.85, h * 0.8], [w * 0.2, h * 0.8]],
+    ],
+    // 육각 비슷
+    (w, h) => [[[w * .25, 0], [w * .75, 0], [w, h * .5], [w * .75, h], [w * .25, h], [0, h * .5]]],
+  ];
+  const rot = (layers, k) => layers.map(l => l.map(([x, y]) =>
+    k === 0 ? [x, y] : k === 1 ? [-y, x] : k === 2 ? [-x, -y] : [y, -x]));
+  const blocks = [], N = 26;
+  for (let i = 0; i < N; i++) {
+    const w = 4 + Math.floor(rnd() * 8), h = 3 + Math.floor(rnd() * 6);
+    const base = shapes[Math.floor(rnd() * shapes.length)](w, h);
+    const shape = [0, 1, 2, 3].map(k => ({ orientation: k, layers: rot(base, k) }));
+    const rel = Math.floor(rnd() * 26);
+    const proc = 6 + Math.floor(rnd() * 14);
+    blocks.push({
+      release_time: rel, due_date: rel + proc + Math.floor(rnd() * 10) - 2,
+      processing_time: proc, workload: 80 + Math.floor(rnd() * 300),
+      bay_preferences: [Math.floor(rnd() * 100), Math.floor(rnd() * 100)],
+      shape,
+    });
+  }
+  const prob = { name: 'demo', bays: [{ width: 34, height: 16 }, { width: 26, height: 14 }],
+                 blocks, weights: { w1: 1000, w2: 5, w3: 100 } };
+  // 아주 단순한 shelf 배치 (겹침 완화 목적의 근사 — 데모 전용)
+  const ops = {};
+  const push = (t, op) => (ops[t] = ops[t] || []).push(op);
+  const shelves = [ { x: 0.5, y: 0.5, rowH: 0 }, { x: 0.5, y: 0.5, rowH: 0 } ];
+  blocks.forEach((blk, bid) => {
+    const bay = bid % 2, bw = prob.bays[bay].width;
+    const l0 = blk.shape[0].layers[0];
+    const xs = l0.map(p => p[0]), ys = l0.map(p => p[1]);
+    const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys);
+    const sh = shelves[bay];
+    const bh = prob.bays[bay].height;
+    if (sh.x + w > bw) { sh.x = 0.5; sh.y += sh.rowH + 0.6; sh.rowH = 0; }
+    if (sh.y + h > bh) { sh.x = 2.5; sh.y = 0.5; sh.rowH = 0; }   // bay 안으로 랩어라운드
+    const x = Math.round(sh.x), y = Math.round(sh.y);
+    sh.x += w + 0.8; sh.rowH = Math.max(sh.rowH, h);
+    const entry = blk.release_time, exit = entry + blk.processing_time + Math.floor(rnd() * 5);
+    push(entry, { type: 'ENTRY', block_id: bid, bay_id: bay, x, y, orient_idx: 0 });
+    push(exit, { type: 'EXIT', block_id: bid, bay_id: bay });
+  });
+  return { prob, sol: { operations: ops } };
+}
+</script>
+</body>
+</html>

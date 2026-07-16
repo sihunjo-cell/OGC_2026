@@ -35,3 +35,5 @@ docs/
 # log
 perf_out/
 reports/
+visualization/runs/
+tools/bgrun.py
