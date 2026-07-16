@@ -18,6 +18,7 @@ from Phase0 import preprocess
 from Phase2 import Phase2Config
 from .alns import alns
 from .config import OuterConfig
+from .floor import emergency_floor, LAST_FLOOR
 
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
@@ -89,8 +90,23 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     except Exception:
         pre = None
 
+    # 절대 반환 보장: 어느 경로에서 warm/워커가 다 실패해도 None 대신 floor를 낸다.
+    # floor는 min-비교에서 절대 못 이기므로 정상 경로 결과는 불변.
+    floor_sol = None
+    if pre is not None:
+        try:
+            fs = emergency_floor(prob_info, pre)
+            if fs.feasible:
+                floor_sol = fs.solution
+                LAST_FLOOR["sol"] = floor_sol
+        except Exception:
+            floor_sol = None
+
+    def _best_fallback(cur):
+        return cur if cur is not None else floor_sol
+
     if deadline is not None and time.perf_counter() >= deadline:
-        return warm_sol
+        return _best_fallback(warm_sol)
 
     if not use_default or n_workers <= 1 or n == 1 or pre is None:
         budget_left = max(1.0, time_limit - (time.perf_counter() - t0))
@@ -108,16 +124,16 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
         cands = [(o, s) for (o, s) in results if s is not None]
         if warm_sol is not None:
             cands.append((warm_obj, warm_sol))
-        return min(cands, key=lambda r: r[0])[1] if cands else warm_sol
+        return _best_fallback(min(cands, key=lambda r: r[0])[1] if cands else warm_sol)
 
     remaining = time_limit - (time.perf_counter() - t0)
     if deadline is not None:
         remaining = min(remaining, deadline - time.perf_counter())
 
     if warm_sol is not None and deadline is None and remaining < 10.0:
-        return warm_sol
+        return _best_fallback(warm_sol)
     if warm_sol is not None and deadline is not None and remaining <= 0.0:
-        return warm_sol
+        return _best_fallback(warm_sol)
     if warm_sol is not None and deadline is not None and remaining < 10.0:
         obj, sol = _run_single(
             prob_info,
@@ -130,9 +146,9 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
         cands = [(warm_obj, warm_sol)]
         if sol is not None:
             cands.append((obj, sol))
-        return min(cands, key=lambda r: r[0])[1]
+        return _best_fallback(min(cands, key=lambda r: r[0])[1])
     if deadline is not None and time.perf_counter() >= deadline:
-        return warm_sol
+        return _best_fallback(warm_sol)
 
     tmpdir = tempfile.mkdtemp(prefix="ogc_pf_")
     prob_path = os.path.join(tmpdir, "prob.json")
@@ -186,14 +202,14 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
             except Exception:
                 pass
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return warm_sol if warm_sol is not None else _run_single(
+        return _best_fallback(warm_sol if warm_sol is not None else _run_single(
             prob_info,
             worker_wall,
             configs[0],
             pre,
             deadline=deadline,
             deadline_s=deadline_s,
-        )[1]
+        )[1])
 
     wait_deadline = (
         deadline + _wrapup_margin(time_limit)
@@ -222,7 +238,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
             continue
 
     shutil.rmtree(tmpdir, ignore_errors=True)
-    return best_sol
+    return _best_fallback(best_sol)
 
 
 def _wrapup_margin(time_limit: float) -> float:
