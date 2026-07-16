@@ -44,8 +44,7 @@ class Raster:
         # 발자국 사각형(8이웃 팽창 1칸 포함, 격자 좌표로 클립). len == ver[j] 불변.
         self._incremental = incremental
         self._dirty = [[] for _ in range(self.n_bays)]
-        # scan 캐시 바이트 상한(초과 시 전량 clear). realize당 일시 캐시이나 dyn-on이
-        # 타 bay 지도까지 적재해 P6 피크 ~1GB. clear는 miss시 재계산이라 비트동일.
+        # scan 캐시 바이트 상한(초과 시 전량 clear; miss시 재계산이라 비트동일).
         self._scan_cap = int(os.environ.get("OGC_SCAN_CAP_MB", "600")) * 1_000_000
         self._scan_bytes = 0
 

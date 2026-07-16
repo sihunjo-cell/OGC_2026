@@ -30,8 +30,8 @@ class NFPCache:
         self._mode = (mode or GEOM_MODE)
         self._cache: dict = {}       # (i,n,oi,on,ki,kj) -> pieces/rings
         self._decomp: dict = {}      # (i,o,k) -> 볼록 분할 (fast/pieces 경로)
-        # 엔트리 상한(초과 시 clear). 순수 메모이제이션이라 결과 비트동일; 프로세스
-        # 수명 무한성장(대형서 GB급 OOM 1순위)을 상한. train 스케일선 무발동.
+        # 엔트리 상한(초과 시 clear; 순수 메모라 결과 비트동일). 프로세스-수명
+        # 무한성장을 막는다. train 스케일선 무발동.
         self._cap = int(os.environ.get("OGC_NFP_CAP", "250000"))
 
     def _layer(self, i: int, o: int, k: int):

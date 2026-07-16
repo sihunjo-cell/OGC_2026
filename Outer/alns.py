@@ -36,8 +36,8 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     s_best = s
 
-    # 증분 결과 방출(원자적 기록용). 전역 best 갱신 시에만, ≥3s 스로틀 -- 개선은
-    # 희소하므로(첫 1~6회 후 near-miss 장벽) 방출 수는 극소, 궤적 교란 무시 가능.
+    # 증분 결과 방출(원자적 기록용). 전역 best 갱신 시에만 ≥3s 스로틀 -- 개선이
+    # 희소해 방출 수가 극소이므로 궤적 교란은 무시 가능.
     _last_emit = [0.0]
 
     def _emit_best(sol):

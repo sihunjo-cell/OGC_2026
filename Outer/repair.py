@@ -94,8 +94,8 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
         return out
 
     while remaining:
-        # 마감 후엔 O(q^2) 재계산 루프를 멈춘다(잔여는 아래 fallback으로 완결).
-        # alns가 repair 직후 마감 체크로 이 결과를 버리므로 마감 전 결과는 불변.
+        # 마감 후엔 멈춘다(잔여는 아래 fallback으로 완결; alns가 repair 직후 이 결과를
+        # 버리므로 마감 전 결과는 불변).
         if deadline is not None and time.perf_counter() >= deadline:
             break
         best = {i: sorted_costs(i) for i in remaining}

@@ -86,9 +86,8 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     warm_obj, warm_sol, pre = float("inf"), None, None
     try:
         pre = preprocess(prob_info)
-        # warm 빌드 예산 상한: max(30s, 0.35T). 30s 하한이라 train 스케일(warm
-        # cold ≤~11s)은 절대 안 물림 = P1~P5 불변. P6급에서만 발동해 절단-but-feasible
-        # warm으로 floor를 깔고 워커에 잔여 예산을 남긴다(워커 늦은 스폰 방지).
+        # warm 빌드 예산 상한 max(30s, 0.35T): 30s 하한이라 train 스케일은 안 물리고
+        # (P1~P5 불변), 대형서만 발동해 워커가 굶지 않게 잔여 예산을 남긴다.
         warm_deadline = deadline
         if deadline is not None:
             cap = max(30.0, 0.35 * float(time_limit))

@@ -3,7 +3,7 @@
 Per-bay tail-pointer placement: each block goes to an eligible bay (preference
 desc, shortest tail tiebreak) at its IFP bottom-left corner in a window where
 that bay is otherwise empty (entry = max(release, bay tail)). Empty-window +
-IFP corner is structurally checker-feasible (see design doc S1 proof)."""
+IFP corner is structurally checker-feasible."""
 
 from __future__ import annotations
 

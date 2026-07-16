@@ -7,6 +7,7 @@ relative-NFP 캐시 조회를 다룬다."""
 from __future__ import annotations
 
 import math
+import os
 import weakref
 
 import numpy as _np
@@ -132,8 +133,7 @@ def reflect_rings(rings: list) -> list:
 # 키로 WeakKeyDictionary에 담아 worker PRE로 pickle되지 않고 PRE와 함께 해제된다.
 # `fixed < moving` 분기는 이미 NFPCache._cache를 직접 친다.
 _REL_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
-import os as _os                                             # noqa: E402
-_REL_CAP = int(_os.environ.get("OGC_NFP_CAP", "250000"))
+_REL_CAP = int(os.environ.get("OGC_NFP_CAP", "250000"))
 
 
 def _rel_memo(nfp):
@@ -144,7 +144,7 @@ def _rel_memo(nfp):
 
 
 def _memo_put(memo, key, rings):
-    # 프로세스-수명 reflect-NFP 미러의 무한성장 상한(순수 메모, 결과 비트동일).
+    # 상한 초과 시 clear (순수 메모라 결과 비트동일).
     if len(memo) >= _REL_CAP:
         memo.clear()
     memo[key] = rings

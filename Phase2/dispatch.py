@@ -95,8 +95,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         return True
 
     def _try_admit(i, j, t, rank=0, earlier=0):
-        # deadline 이후엔 스캔 1회(대형서 수초~수십초) 진입 자체를 막는다. 마감 전엔
-        # 항상 통과하므로 정상 궤적은 비트동일; 마감 후엔 잔여를 _force로 완결.
+        # 마감 후엔 스캔 진입 자체를 막는다(마감 전엔 항상 통과 = 비트동일).
         if deadline is not None and time.perf_counter() >= deadline:
             return False
         xt = t + P[i]
@@ -217,9 +216,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                         break
 
     # -- 잔여(마감 초과 포함) -> 빈 창 강제 배치: 출력은 항상 완전한 배정 --------
-    # per-bay 스케줄 스냅숏: 이벤트 루프 종료 시점 coords의 (entry, exit) 구간.
-    # empty_bay_entry 고정점은 구간 '집합'에만 의존(순서 무관)하므로 1회 구축 후
-    # force된 블록을 append해도 매 호출 range(n) 재수집과 비트동일(설계 §1 증명).
+    # per-bay 스케줄 스냅숏을 1회 구축 후 append. empty_bay_entry 고정점은 구간
+    # '집합'에만 의존(순서 무관)하므로 매 호출 range(n) 재수집과 비트동일.
     # coords 기준(placed[j] 아님): exit한 블록도 포함해야 기존 필터와 일치.
     _sched = [[] for _ in range(pre.n_bays)]
     _tail = [0] * pre.n_bays
@@ -232,8 +230,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         j = bay[i]
         if deadline is not None and time.perf_counter() >= deadline:
             # 마감 후: 빈-창 탐색(bay당 O(k²)) 대신 tail-pointer(O(1)). bay tail
-            # 이후 배치라 빈 창=feasible(§1 증명); 절단 해는 min-wins서 버려지므로
-            # 지각 손해 무관. 대형 문제서 꼬리가 wrapup을 뚫는 것을 막는다.
+            # 이후라 빈 창=feasible; 절단 해는 min-wins서 버려진다.
             pos, o = rp.force_corner(i, j, pre)
             e = max(int(R[i]), _tail[j])
             x = e + P[i]
