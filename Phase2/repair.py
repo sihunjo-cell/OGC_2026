@@ -43,6 +43,18 @@ def empty_bay_entry(schedule: list, r_time: int, proc: int) -> int:
     return entry
 
 
+def force_corner(i: int, j: int, pre) -> tuple:
+    """빈-창 탐색 없이 IFP 좌하단 코너 + 첫 적합 orientation만 반환 (pos, o).
+    tail-pointer 배치(마감 후 O(1) 완결)용. 어떤 orientation도 안 맞으면
+    orientation 0의 raw 코너로 폴백(예외 대신 -- 완결 보장)."""
+    for o in range(len(pre.poly[i])):
+        (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
+        if x_lo <= x_hi and y_lo <= y_hi:
+            return (x_lo, y_lo), o
+    (x_lo, _), (y_lo, _) = pre.IFP[i][0][j]
+    return (x_lo, y_lo), 0
+
+
 def force_place(i: int, j: int, other_schedule: list, pre, R: list, P: list) -> tuple:
     """bay j에 블록 i를 넣는 safety-net 배치: 처음 들어맞는 orientation의 IFP
     좌하단 코너, 빈 bay window에 반입.
