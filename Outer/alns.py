@@ -18,7 +18,7 @@ from .repair import repair
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
-         max_iters=None, deadline=None, deadline_s=None, t0=None):
+         max_iters=None, deadline=None, deadline_s=None, t0=None, on_best=None):
     """Run ALNS until budget, deadline, or max_iters is reached.
 
     t0: anytime 계측의 시각 원점(perf_counter 값). 미지정 시 alns 시작 시각.
@@ -35,6 +35,23 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     s_best = s
+
+    # 증분 결과 방출(원자적 기록용). 전역 best 갱신 시에만, ≥3s 스로틀 -- 개선은
+    # 희소하므로(첫 1~6회 후 near-miss 장벽) 방출 수는 극소, 궤적 교란 무시 가능.
+    _last_emit = [0.0]
+
+    def _emit_best(sol):
+        if on_best is None or not sol.feasible:
+            return
+        now = time.perf_counter()
+        if _last_emit[0] == 0.0 or now - _last_emit[0] >= 3.0:
+            _last_emit[0] = now
+            try:
+                on_best(sol.objective, sol.solution)
+            except Exception:
+                pass
+
+    _emit_best(s_best)
 
     T = init_temperature(s.objective, cfg.w_pct)
     aos = AOS(cfg.destroy_ops, cfg.repair_ops, cfg)
@@ -97,6 +114,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             stats["improved"] += 1
             stats["best_events"].append([time.perf_counter() - t0, s2.objective])
             since_best = 0
+            _emit_best(s_best)
         else:
             since_best += 1
 
@@ -110,6 +128,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
                 if sj.objective < s_best.objective:
                     s_best = sj
                     stats["best_events"].append([time.perf_counter() - t0, sj.objective])
+                    _emit_best(s_best)
                 T = init_temperature(s.objective, cfg.w_pct)
             stats["restarts"] += 1
             since_best = 0
