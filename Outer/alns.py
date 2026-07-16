@@ -55,7 +55,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
 
     T = init_temperature(s.objective, cfg.w_pct)
     aos = AOS(cfg.destroy_ops, cfg.repair_ops, cfg)
-    aos.visited.add(s.key())
+    aos.mark_visited(s)
 
     stats = {
         "iters": 0,
