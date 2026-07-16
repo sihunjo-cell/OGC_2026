@@ -37,5 +37,5 @@ perf_out/
 reports/
 visualization/runs/
 
-# personalized tool
-tools/bgrun.py
+# personalized tools
+personalized_tools/
