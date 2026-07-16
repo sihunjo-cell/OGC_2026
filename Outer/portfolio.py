@@ -30,13 +30,25 @@ def default_portfolio() -> list:
     - dyn-off 페어(κ3·κ1): 재라우팅(선호bay 이탈=Z3 손해)이 해로운 고-w3 유형을 flooring.
     configs[0](κ3 dyn-on)이 부모 warm 빌드로 첫 인증해 + 단일워커 fallback을 담당.
     워커 서브프로세스는 BLAS 1스레드 핀(평가서버 4코어 cpulimit 스로틀 방지)."""
+    # ΔF 재평가용 훅(issue/05): OGC_FRAGDELTA="w,queue_hi,horizon" 시 dyn-on 2워커 적용.
+    fd = {}
+    _fd_env = os.environ.get("OGC_FRAGDELTA", "")
+    if _fd_env:
+        try:
+            _w, _q, _h = (float(x) for x in _fd_env.split(","))
+            fd = dict(dispatch_fragdelta=_w, fragdelta_queue_hi=int(_q),
+                      fragdelta_horizon=int(_h))
+        except Exception:
+            fd = {}
+    # hull-nestle k32/cap12 = dyn-on 기본(2026-07-16 승격, 게이트①~④ = issue/06).
+    nes = dict(dispatch_nestle_k=32, dispatch_nestle_cap=12)
     return [
         OuterConfig(xi=0.3, seed=1, restart_stall=8,
-                    phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8)),   # κ3 dyn-on (warm, 재시작8)
+                    phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, 재시작8)
         OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
                                                         dispatch_dynamic_bay=False)),                  # κ3 dyn-off (32 floor)
         OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24)),  # κ1 dyn-on (혼잡 최강, 재시작16)
+                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24, **fd, **nes)),  # κ1 dyn-on (혼잡 최강, 재시작16)
         OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                         dispatch_dynamic_bay=False)),                  # κ1 dyn-off (37/25 floor)
     ]
@@ -86,8 +98,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     warm_obj, warm_sol, pre = float("inf"), None, None
     try:
         pre = preprocess(prob_info)
-        # warm 빌드 예산 상한 max(30s, 0.35T): 30s 하한이라 train 스케일은 안 물리고
-        # (P1~P5 불변), 대형서만 발동해 워커가 굶지 않게 잔여 예산을 남긴다.
+        # warm 빌드 상한 max(30s, 0.35T): train 무발동, 대형서만 워커 예산 보호.
         warm_deadline = deadline
         if deadline is not None:
             cap = max(30.0, 0.35 * float(time_limit))
@@ -161,9 +172,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     pre_path = os.path.join(tmpdir, "pre.pkl")
     with open(prob_path, "w", encoding="utf-8") as f:
         json.dump(prob_info, f)
-    # warm 빌드가 pre에 붙인 마스크 캐시(수십 MB)는 피클에서 제외 -- 워커는 첫
-    # realize에서 자체 재빌드 후 재사용하므로(측정도 그 기준) 크로스-프로세스 전송은
-    # 불필요한 보너스일 뿐이고, 부하 시 피클/전송 비용이 예산을 갉는 리스크만 준다.
+    # 마스크 캐시(수십 MB)는 피클 제외 -- 워커가 자체 재빌드(전송비용 리스크 회피).
     try:
         delattr(pre, "_raster_mask_cache")
     except AttributeError:
@@ -194,8 +203,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                 "" if deadline is None else str(deadline),
                 "" if deadline_s is None else str(deadline_s),
             ]
-            # 워커 BLAS 1스레드 핀: 평가서버(4코어, cpulimit 400%)에서 4워커×다중스레드
-            # BLAS 초과구독 -> 스로틀 방지 (4x1=400% 정확). 결과는 스레드수와 무관(비트동일 확인).
+            # 워커 BLAS 1스레드 핀(4코어 cpulimit 스로틀 방지, 결과 무관).
             p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  env={**os.environ,
                                       "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",

@@ -36,8 +36,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     s_best = s
 
-    # 증분 결과 방출(원자적 기록용). 전역 best 갱신 시에만 ≥3s 스로틀 -- 개선이
-    # 희소해 방출 수가 극소이므로 궤적 교란은 무시 가능.
+    # 증분 결과 방출(원자 기록용): 전역 best 갱신 시에만, ≥3s 스로틀.
     _last_emit = [0.0]
 
     def _emit_best(sol):
@@ -67,8 +66,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "elapsed_s": 0.0,
         "deadline_s": deadline_s,
         "stopped_by_deadline": False,
-        # anytime 곡선용: [t0 기준 상대시각(s), 그 시점의 incumbent objective].
-        # 첫 원소 = 초기 realize 완료 시점(= 최초로 반환 가능한 인증해).
+        # anytime 곡선: [상대시각, incumbent obj], 첫 원소 = 초기 realize.
         "best_events": [[time.perf_counter() - t0, s.objective]],
         "iter_t": [],   # 반복 완료 시각(t0 기준). diff -> 반복 1회 비용 분포.
     }

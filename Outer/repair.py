@@ -41,8 +41,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
     w = prob_info.get("weights", {})
     w1, w2, w3 = w.get("w1", 1.0), w.get("w2", 1.0), w.get("w3", 1.0)
     areas = _areas(pre)
-    # 혼잡 페널티를 매 repair마다 적용(w1로 스케일, w3*선호와 경쟁). 별도
-    # 연산자로 두면 반복이 적은 환경에서 효과가 희석돼 이렇게 통합함
+    # 혼잡 페널티는 매 repair에 통합(w1 스케일, 별도 연산자면 저반복서 희석)
     cw = cfg.crowd_weight
     eta = cfg.crowd_eta
     op_type = "regret_k" if "regret" in op else "greedy"
@@ -77,8 +76,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
         over = peak - eta * WH
         return (cw * w1 * over / WH) if over > 0.0 else 0.0
 
-    # 노이즈 진폭을 블록의 최대 선호 편차에 맞춰 스케일 -- 교란이 실제
-    # 삽입 비용 격차와 비슷한 크기가 되도록
+    # 노이즈 진폭 = 실제 삽입비용 격차 스케일
     noise_amp = cfg.repair_noise * max(w3 * 100.0, w2 * 10.0, 1.0)
 
     def sorted_costs(i):

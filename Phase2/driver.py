@@ -15,11 +15,6 @@ from .dispatch import dispatch_construct
 from . import repair as rp
 
 
-def _overlap(entry, exit_, a, b) -> bool:
-    """반열린 구간 겹침 [entry_a, exit_a) & [entry_b, exit_b)."""
-    return entry[a] < exit_[b] and entry[b] < exit_[a]
-
-
 def build_solution(coords, orient, entry, exit_, bay, block_ids) -> dict:
     """{"operations": {...}} dict 조립. 같은 날 안에서는 EXIT를 ENTRY보다 먼저
     (정렬 키 0 = EXIT, 1 = ENTRY), block_id를 2차 키로."""

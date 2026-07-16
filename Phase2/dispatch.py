@@ -53,6 +53,22 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     incremental=bool(getattr(cfg, "scan_incremental", True)),
                     mask_share=bool(getattr(cfg, "mask_cache_share", False)))
     fail_stop = int(getattr(cfg, "dispatch_admit_fail_stop", 0) or 0)
+    # ΔF 항(issue/05): FLOP 프록시 누적 상한 초과 시 잔여 결정론적 셧오프(비트동일).
+    frag_w = float(getattr(cfg, "dispatch_fragdelta", 0.0) or 0.0)
+    frag_q = int(getattr(cfg, "fragdelta_q", 4) or 0)
+    frag_cap = float(getattr(cfg, "fragdelta_flop_cap", 2e9))
+    frag_hor = int(getattr(cfg, "fragdelta_horizon", 0) or 0)
+    frag_flops, frag_alive = 0.0, True
+    # hull-nestle 회수(issue/06): FLOP 캡은 fragdelta와 동형(결정론적 셧오프).
+    nes_k = int(getattr(cfg, "dispatch_nestle_k", 0) or 0)
+    nes_cap = int(getattr(cfg, "dispatch_nestle_cap", 12) or 0)
+    nes_flop_cap = float(getattr(cfg, "dispatch_nestle_flop_cap", 2e9))
+    nes_flops, nes_alive = 0.0, True
+    nes_space = None
+    if nes_k > 0:
+        from .nestle import ExactSpace
+        nes_space = ExactSpace(pre, fast=bool(
+            getattr(cfg, "dispatch_nestle_fast", True)))
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
     abar = (sum(amin) / n) if n else 1.0
@@ -94,13 +110,66 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             return False
         return True
 
-    def _try_admit(i, j, t, rank=0, earlier=0):
+    def _try_nestle(i, j, t, xt):
+        # 마스크-비가시 합법 앵커 회수(N2). 후보 = 0<count<=K, count 오름차순
+        # (동률은 행우선 = bottom-left) 상위 cap개. 공간은 exact polygon, 크레인은
+        # 기존 _exact_gate -- 커밋 경로는 기존과 동일(hull 마스크 스탬프 유지).
+        nonlocal nes_flops, nes_alive
+        for o in range(len(pre.poly[i])):
+            if deadline is not None and time.perf_counter() >= deadline:
+                return False
+            (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
+            if x_lo > x_hi or y_lo > y_hi:
+                continue
+            msk, _, _ = raster.mask(i, o)
+            Kq, MH, MW = msk.shape
+            proxy = (float(max(raster.H[j] - MH + 1, 0))
+                     * max(raster.W[j] - MW + 1, 0) * MH * MW * Kq)
+            if proxy <= 0.0:
+                continue
+            if nes_flops + proxy > nes_flop_cap:
+                nes_alive = False
+                return False
+            nes_flops += proxy
+            total, mx0, my0 = raster.count_scan(j, i, o)
+            if total is None:
+                continue
+            r_lo, r_hi = max(0, y_lo + my0), min(total.shape[0] - 1, y_hi + my0)
+            c_lo, c_hi = max(0, x_lo + mx0), min(total.shape[1] - 1, x_hi + mx0)
+            if r_lo > r_hi or c_lo > c_hi:
+                continue
+            sub = total[r_lo:r_hi + 1, c_lo:c_hi + 1]
+            pos_rc = np.argwhere((sub > 0) & (sub <= nes_k))
+            if pos_rc.size == 0:
+                continue
+            vals = sub[pos_rc[:, 0], pos_rc[:, 1]]
+            for oi in np.argsort(vals, kind="stable")[:nes_cap]:
+                r, c = pos_rc[oi]
+                pos = (int(c + c_lo) - mx0, int(r + r_lo) - my0)
+                if not nes_space.space_ok(j, raster.ver[j], i, o, pos,
+                                          placed[j], coords, orient):
+                    continue
+                if _exact_gate(i, j, o, pos, xt):
+                    coords[i] = pos
+                    orient[i] = o
+                    entry[i] = t
+                    exit_[i] = xt
+                    raster.add(j, i, o, pos)
+                    placed[j].append(i)
+                    return True
+        return False
+
+    def _try_admit(i, j, t, rank=0, earlier=0, futures=None):
         # 마감 후엔 스캔 진입 자체를 막는다(마감 전엔 항상 통과 = 비트동일).
         if deadline is not None and time.perf_counter() >= deadline:
             return False
         xt = t + P[i]
         cap = (cfg.dispatch_cand_cap_hi if len(queue[j]) >= cfg.dispatch_queue_hi
                else cfg.dispatch_cand_cap)
+        # ΔF 페널티용 미래 표적(자기 자신은 제외 -- 제 앵커를 스스로 피하지 않게).
+        futs = None
+        if futures:
+            futs = [f for f in futures if f[0] != i] or None
         any_space = False          # 진단: 어떤 방향이라도 IFP∩feasible 앵커>0 였나
         feas_anchors = cells_tried = gate_rej = 0
         for o in range(len(pre.poly[i])):
@@ -120,7 +189,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             if n_ok:
                 any_space = True
                 feas_anchors += n_ok
-            for (r, c) in raster.order_cells(j, i, o, allow, cap):
+            for (r, c) in raster.order_cells(j, i, o, allow, cap, futs, frag_w):
                 cells_tried += 1
                 pos = (int(c) - mx0, int(r) - my0)
                 if _exact_gate(i, j, o, pos, xt):
@@ -134,6 +203,11 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                                      feas_anchors, cells_tried, gate_rej)
                     return True
                 gate_rej += 1
+        # -- N2 hull-nestle 회수: mask-feasible 패스 전멸 시에만 (K=0 = 미진입) --
+        if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
+            PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
+                             feas_anchors, cells_tried, gate_rej)
+            return True
         PROBE.on_attempt(t, j, i, rank, earlier,
                          "gate_fail" if any_space else "no_space",
                          feas_anchors, cells_tried, gate_rej)
@@ -173,12 +247,64 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         for j in range(pre.n_bays):
             if not queue[j]:
                 continue
+            # ΔF pre-pass: M*(큐 대형 Q개) feasible 지도 SAT를 패스당 1회 구축.
+            # 패스 중 admit로 낡아도 그대로 씀(랭킹 휴리스틱).
+            futures = None
+            if frag_w > 0.0 and frag_alive and frag_q > 0 \
+                    and len(queue[j]) >= int(getattr(cfg, "fragdelta_queue_hi", 6)):
+                pool = list(queue[j])
+                if frag_hor > 0:
+                    # 완전 예지: t+H 내 도착 예정(미방출)인 이 bay 배정 블록도 표적.
+                    k = ri
+                    while k < n and R[order[k]] <= t + frag_hor:
+                        if bay[order[k]] == j:
+                            pool.append(order[k])
+                        k += 1
+                futures = []
+                for m in sorted(pool, key=lambda b: (-amin[b], b))[:frag_q]:
+                    if deadline is not None and time.perf_counter() >= deadline:
+                        break
+                    o_m = min(range(len(pre.poly[m])),
+                              key=lambda oo: pre.area[m][oo])
+                    (xl, xh), (yl, yh) = pre.IFP[m][o_m][j]
+                    if xl > xh or yl > yh:
+                        continue
+                    msk, _, _ = raster.mask(m, o_m)
+                    Km, MHm, MWm = msk.shape
+                    cached = raster._scan.get(j, {}).get((m, o_m))
+                    if cached is None or cached[0] != raster.ver[j]:
+                        # 신규(또는 낡은) 스캔 = 실비용. 전체 재계산 상한으로 계정
+                        # (증분이면 과대계상 = 보수적 셧오프).
+                        proxy = (float(max(raster.H[j] - MHm + 1, 0))
+                                 * max(raster.W[j] - MWm + 1, 0) * MHm * MWm * Km)
+                        if frag_flops + proxy > frag_cap:
+                            frag_alive = False
+                            break
+                        frag_flops += proxy
+                    feas_m, mxm, mym = raster.scan(j, m, o_m)
+                    if feas_m.size == 0:
+                        continue
+                    r_lo = max(0, yl + mym)
+                    r_hi = min(feas_m.shape[0] - 1, yh + mym)
+                    c_lo = max(0, xl + mxm)
+                    c_hi = min(feas_m.shape[1] - 1, xh + mxm)
+                    if r_lo > r_hi or c_lo > c_hi:
+                        continue
+                    allow_m = np.zeros_like(feas_m)
+                    allow_m[r_lo:r_hi + 1, c_lo:c_hi + 1] = \
+                        feas_m[r_lo:r_hi + 1, c_lo:c_hi + 1]
+                    tot = int(allow_m.sum())
+                    if tot == 0:
+                        continue
+                    futures.append((m, MHm, MWm, Raster.sat_of(allow_m), tot))
+                if not futures:
+                    futures = None
             _earlier = 0     # 진단: 같은 tick·bay 에서 앞서 admit 된 수 (캐스케이드 깊이)
             _fails = 0       # 마지막 admit 이후 연속 실패 수 (조기중단 카운터)
             for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
-                if _try_admit(i, j, t, _rank, _earlier):
+                if _try_admit(i, j, t, _rank, _earlier, futures):
                     _earlier += 1
                     _fails = 0
                     queue[j].remove(i)
