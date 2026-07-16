@@ -9,6 +9,7 @@ soundness: 마스크는 각 layer convex hull의 superset(단위칸 touch=1). �
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 import shapely
@@ -43,6 +44,10 @@ class Raster:
         # 발자국 사각형(8이웃 팽창 1칸 포함, 격자 좌표로 클립). len == ver[j] 불변.
         self._incremental = incremental
         self._dirty = [[] for _ in range(self.n_bays)]
+        # scan 캐시 바이트 상한(초과 시 전량 clear). realize당 일시 캐시이나 dyn-on이
+        # 타 bay 지도까지 적재해 P6 피크 ~1GB. clear는 miss시 재계산이라 비트동일.
+        self._scan_cap = int(os.environ.get("OGC_SCAN_CAP_MB", "600")) * 1_000_000
+        self._scan_bytes = 0
 
     # -- 마스크 ---------------------------------------------------------------
 
@@ -161,6 +166,18 @@ class Raster:
             return None
         return (ar0, ar1, ac0, ac1)
 
+    def _account(self, per_bay, key, feas):
+        """scan 캐시 바이트 추적 + 상한 초과 시 전량 clear(비트동일: miss시 재계산).
+        같은 키 재저장은 old 바이트를 빼고 다시 더해 재스캔 과다계수를 피한다."""
+        old = per_bay.get(key)
+        if old is not None:
+            self._scan_bytes -= old[1].nbytes
+        self._scan_bytes += feas.nbytes
+        if self._scan_bytes > self._scan_cap:
+            for d in self._scan.values():
+                d.clear()
+            self._scan_bytes = feas.nbytes
+
     def scan(self, j: int, i: int, o: int):
         """bay j에서 (i, o)의 모든 정수 앵커 feasibility.
 
@@ -187,6 +204,7 @@ class Raster:
             if A is None:
                 # 변경영역이 이 (i,o)의 어떤 앵커와도 안 겹침 -> 지도 불변.
                 feas = cached[1]
+                self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
                 PROBE.on_scan_hit(j, i, o)
                 return feas, mx0, my0
@@ -204,6 +222,7 @@ class Raster:
                         Vk[ar0:ar1 + MH - 1, ac0:ac1 + MW - 1], (MH, MW))
                     sub += np.einsum('rcij,ij->rc', win, m32[k])
                 feas[ar0:ar1, ac0:ac1] = (sub == 0)
+                self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
                 PROBE.on_scan_miss(j, i, o, cached[0], v1, False,
                                    float(ar1 - ar0) * (ac1 - ac0) * MH * MW,
@@ -231,6 +250,7 @@ class Raster:
             feas = (total == 0)
         if not _cold and cached[1].shape == feas.shape:
             PROBE.on_scan_diff(int(np.count_nonzero(feas != cached[1])), feas.size)
+        self._account(per_bay, (i, o), feas)
         per_bay[(i, o)] = (v1, feas, mx0, my0)
         PROBE.on_scan_miss(j, i, o, _cached_ver, v1, _cold, _cost,
                            int(feas.sum()))
