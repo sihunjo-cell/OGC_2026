@@ -9,6 +9,8 @@ crowd(i, j)는 혼잡을 피하도록 유도하는 Z1 인지 소프트 면적-�
 
 from __future__ import annotations
 
+import time
+
 from Phase1.common import eligible, footprint_area
 from .objective import loads_from_bay, z2_raw
 
@@ -26,7 +28,7 @@ def _areas(pre):
     return a
 
 
-def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng) -> list:
+def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadline=None) -> list:
     blocks = prob_info["blocks"]
     bays = prob_info["bays"]
     m = pre.n_bays
@@ -92,6 +94,10 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng) -> lis
         return out
 
     while remaining:
+        # 마감 후엔 O(q^2) 재계산 루프를 멈춘다(잔여는 아래 fallback으로 완결).
+        # alns가 repair 직후 마감 체크로 이 결과를 버리므로 마감 전 결과는 불변.
+        if deadline is not None and time.perf_counter() >= deadline:
+            break
         best = {i: sorted_costs(i) for i in remaining}
         best = {i: cs for i, cs in best.items() if cs}      # 배치 불가 제거(발생하면 안 됨)
         if not best:

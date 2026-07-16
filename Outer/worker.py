@@ -65,12 +65,18 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
         alns_budget = None
         if deadline is None:
             alns_budget = max(1.0, wall_budget - (time.perf_counter() - t0) - _WRITE_MARGIN)
+        # 크로스-프로세스 deadline(부모의 절대 perf_counter)을 자기 시계 예산으로도
+        # 상한: 시계 원점 가정이 깨져도 워커가 자기 wall_budget을 넘기지 않는다.
+        deadline_eff = deadline
+        if deadline is not None:
+            deadline_eff = min(deadline,
+                               time.perf_counter() + max(1.0, wall_budget - _WRITE_MARGIN))
         s, st = alns(
             prob_info,
             pre,
             alns_budget,
             cfg,
-            deadline=deadline,
+            deadline=deadline_eff,
             deadline_s=deadline_s,
             on_best=_on_best,
         )

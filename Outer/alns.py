@@ -93,7 +93,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
 
         op_rem, op_ins = aos.select(rng)
         partial, D = destroy(s, op_rem, cfg, prob_info, pre, rng)
-        bay2 = repair(partial, D, op_ins, cfg, prob_info, pre, rng)
+        bay2 = repair(partial, D, op_ins, cfg, prob_info, pre, rng, deadline=deadline)
 
         now = time.perf_counter()
         if deadline is not None and now >= deadline:
@@ -119,7 +119,9 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             since_best += 1
 
         # 정체 재시작: κ-지터 구성으로 새 basin (s_best 유지, 온도 리셋).
-        if restart_stall and since_best >= restart_stall and cfg.phase2 is not None:
+        # 마감을 이미 넘겼으면 두 번째 full realize를 시작하지 않는다(마감 후 전용).
+        if (restart_stall and since_best >= restart_stall and cfg.phase2 is not None
+                and not (deadline is not None and time.perf_counter() >= deadline)):
             jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))
             p2j = dataclasses.replace(cfg.phase2, atc_kappa=jk)
             sj = realize(p1.bay, prob_info, pre, p2j, deadline=deadline)
