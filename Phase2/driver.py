@@ -113,7 +113,10 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
     # 가벼운 크레인 sweep을 싸게 해소. Phase B: 그래도 충돌하면 빈 bay로 강제.
     forced = set()
     feasible, conflicts, stage = False, [], 0
+    sol = None
     for _ in range(cfg.max_repair_passes):
+        if _past():                # 마감 후엔 재인증 패스(공식체커 O(n^2/bay))를 멈춘다.
+            break
         sol = build_solution(coords, orient, entry, exit_, bay, range(n))
         feasible, conflicts, stage = crane_feasibility(prob_info, sol)
         if feasible or not conflicts:
@@ -127,7 +130,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
     rescue_budget = cfg.force_retry_budget
     slot_rescued = retry_reverted = 0
     guard, guard_max = 0, n + 8
-    while not feasible and conflicts and guard <= guard_max:
+    while not feasible and conflicts and guard <= guard_max and not _past():
         guard += 1
         allow_rescue = (cfg.force_retry_phase_b and rescue_budget > 0
                         and guard <= guard_max - 4 and not _past())
@@ -156,6 +159,9 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
             entry[v], exit_[v] = e, x
         sol = build_solution(coords, orient, entry, exit_, bay, range(n))
         feasible, conflicts, stage = crane_feasibility(prob_info, sol)
+
+    if sol is None:                # 마감이 진입 시점에 이미 지남 -> 반환용 조립(미인증).
+        sol = build_solution(coords, orient, entry, exit_, bay, range(n))
 
     Z1 = sum(max(0, exit_[i] - D[i]) for i in range(n)) if feasible else None
 
