@@ -20,14 +20,9 @@ class OuterConfig:
     # -- O.2 repair(복구) -----------------------------------------------------
     repair_ops: tuple = ("greedy", "regret_k")
     regret_k: int = 3
-    # 삽입 비용 노이즈: 없으면 결정적 greedy가 방금 제거한 배정을 그대로
-    # 복원해 이웃이 한 점으로 붕괴한다
-    repair_noise: float = 0.1
-
-    # Z1 인지 혼잡 페널티: repair는 지연(Z1, Phase 2에서만 드러남)을 못 보므로
-    # 과밀·강제 배정을 피하도록 유도한다. 0이면 Z1 무시 기준선.
-    crowd_weight: float = 6.0
-    crowd_eta: float = 0.85            # 용량 비율(Phase 1 eta와 동일). over=peak-eta*WH hinge
+    repair_noise: float = 0.1          # 삽입비용 노이즈 (0이면 이웃이 한 점으로 붕괴)
+    crowd_weight: float = 6.0          # Z1 인지 혼잡 페널티 배율 (0 = Z1 무시 기준선)
+    crowd_eta: float = 0.85            # 용량 비율. over = peak - eta*WH hinge
 
     # -- O.3 적응적 가중치 AOS ------------------------------------------------
     r: float = 0.1                                   # 반응 계수
@@ -41,9 +36,7 @@ class OuterConfig:
     c: float = 0.99975                               # 기하 냉각 계수
 
     # -- O.5 정체 재시작 --------------------------------------------------------
-    # N회 연속 best 미갱신이면 κ-지터 구성으로 재시작(새 basin 탐색, s_best 유지).
-    # 긴 예산에서 포화된 탐색 시간을 "서로 다른 구성"으로 전환. 0 = 끔.
-    restart_stall: int = 0
+    restart_stall: int = 0             # N회 연속 best 미갱신 시 κ-지터 재시작 (0=끔)
 
     # -- 기타 ------------------------------------------------------------------
     seed: int = 0

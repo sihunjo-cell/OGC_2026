@@ -49,9 +49,8 @@ def _solution_from_result(bay: list, p1, res, prob_info: dict, utils_mod=None) -
     elif not feasible:
         objective = float("inf")
 
-    # 동적 bay 재라우팅된 실제 배정을 ALNS 상태(bay)로 되먹인다: 서로 다른 제안 bay가
-    # 같은 실현 레이아웃으로 뭉개지는 탐색 붕괴를 막아 bay 탐색 효과를 회복. dyn-off면
-    # res.bay == 입력 bay라 바이트동일. (Z2/Z3는 공식 체커가 실현 배정 기준으로 인증.)
+    # 실현(재라우팅 후) bay를 ALNS 상태로 되먹임(탐색 붕괴 방지). dyn-off면 입력과
+    # 동일 = 바이트동일. Z2/Z3는 체커가 실현 배정 기준으로 인증.
     rbay = res.bay if getattr(res, "bay", None) is not None else bay
     return Solution(
         bay=list(rbay), entry=res.entry, exit_=res.exit_,

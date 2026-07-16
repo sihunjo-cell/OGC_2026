@@ -7,6 +7,7 @@ relative-NFP 캐시 조회를 다룬다."""
 from __future__ import annotations
 
 import math
+import os
 import weakref
 
 import numpy as _np
@@ -132,6 +133,7 @@ def reflect_rings(rings: list) -> list:
 # 키로 WeakKeyDictionary에 담아 worker PRE로 pickle되지 않고 PRE와 함께 해제된다.
 # `fixed < moving` 분기는 이미 NFPCache._cache를 직접 친다.
 _REL_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+_REL_CAP = int(os.environ.get("OGC_NFP_CAP", "250000"))
 
 
 def _rel_memo(nfp):
@@ -139,6 +141,13 @@ def _rel_memo(nfp):
     if m is None:
         m = _REL_MEMO[nfp] = {}
     return m
+
+
+def _memo_put(memo, key, rings):
+    # 상한 초과 시 clear (순수 메모라 결과 비트동일).
+    if len(memo) >= _REL_CAP:
+        memo.clear()
+    memo[key] = rings
 
 
 def relative_nfp(pre, moving: int, fixed: int, o_m: int, o_f: int, k: int) -> list:
@@ -156,7 +165,7 @@ def relative_nfp(pre, moving: int, fixed: int, o_m: int, o_f: int, k: int) -> li
     rings = memo.get(key)
     if rings is None:
         rings = reflect_rings(pre.nfp.same_level(moving, fixed, o_m, o_f, k))
-        memo[key] = rings
+        _memo_put(memo, key, rings)
     return rings
 
 
@@ -173,7 +182,7 @@ def relative_nfp_crane(pre, moving: int, fixed: int, o_m: int, o_f: int,
     rings = memo.get(key)
     if rings is None:
         rings = reflect_rings(pre.nfp.crane(moving, fixed, o_m, o_f, k_m, k_f))
-        memo[key] = rings
+        _memo_put(memo, key, rings)
     return rings
 
 

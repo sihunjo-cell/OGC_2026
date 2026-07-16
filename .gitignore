@@ -35,3 +35,6 @@ docs/
 # log
 perf_out/
 reports/
+/scripts/
+/tests/
+/tools/

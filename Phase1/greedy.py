@@ -73,11 +73,10 @@ def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
         for j in range(m):
             if not common.eligible(pre, i, j):
                 continue
-            if cfg.use_dff:
-                co = [k for k in assigned[j] if common.time_overlap(EST, exit0, i, k)]
-                items = [wh[k] for k in co] + [wh[i]]
-                if dff_lb(items, bays[j]["width"], bays[j]["height"], cfg.pq_step) > 1.0 + 1e-9:
-                    continue                  # 필요조건 위반 -> 후보 제외
+            co = [k for k in assigned[j] if common.time_overlap(EST, exit0, i, k)]
+            items = [wh[k] for k in co] + [wh[i]]
+            if dff_lb(items, bays[j]["width"], bays[j]["height"], cfg.pq_step) > 1.0 + 1e-9:
+                continue                      # DFF 필요조건 위반 -> 후보 제외
             cand.append(j)
 
         if not cand:

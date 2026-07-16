@@ -18,7 +18,7 @@ from .repair import repair
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
-         max_iters=None, deadline=None, deadline_s=None, t0=None):
+         max_iters=None, deadline=None, deadline_s=None, t0=None, on_best=None):
     """Run ALNS until budget, deadline, or max_iters is reached.
 
     t0: anytime 계측의 시각 원점(perf_counter 값). 미지정 시 alns 시작 시각.
@@ -36,9 +36,25 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     s_best = s
 
+    # 증분 결과 방출(원자 기록용): 전역 best 갱신 시에만, ≥3s 스로틀.
+    _last_emit = [0.0]
+
+    def _emit_best(sol):
+        if on_best is None or not sol.feasible:
+            return
+        now = time.perf_counter()
+        if _last_emit[0] == 0.0 or now - _last_emit[0] >= 3.0:
+            _last_emit[0] = now
+            try:
+                on_best(sol.objective, sol.solution)
+            except Exception:
+                pass
+
+    _emit_best(s_best)
+
     T = init_temperature(s.objective, cfg.w_pct)
     aos = AOS(cfg.destroy_ops, cfg.repair_ops, cfg)
-    aos.visited.add(s.key())
+    aos.mark_visited(s)
 
     stats = {
         "iters": 0,
@@ -50,8 +66,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "elapsed_s": 0.0,
         "deadline_s": deadline_s,
         "stopped_by_deadline": False,
-        # anytime 곡선용: [t0 기준 상대시각(s), 그 시점의 incumbent objective].
-        # 첫 원소 = 초기 realize 완료 시점(= 최초로 반환 가능한 인증해).
+        # anytime 곡선: [상대시각, incumbent obj], 첫 원소 = 초기 realize.
         "best_events": [[time.perf_counter() - t0, s.objective]],
         "iter_t": [],   # 반복 완료 시각(t0 기준). diff -> 반복 1회 비용 분포.
     }
@@ -76,7 +91,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
 
         op_rem, op_ins = aos.select(rng)
         partial, D = destroy(s, op_rem, cfg, prob_info, pre, rng)
-        bay2 = repair(partial, D, op_ins, cfg, prob_info, pre, rng)
+        bay2 = repair(partial, D, op_ins, cfg, prob_info, pre, rng, deadline=deadline)
 
         now = time.perf_counter()
         if deadline is not None and now >= deadline:
@@ -97,11 +112,14 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             stats["improved"] += 1
             stats["best_events"].append([time.perf_counter() - t0, s2.objective])
             since_best = 0
+            _emit_best(s_best)
         else:
             since_best += 1
 
         # 정체 재시작: κ-지터 구성으로 새 basin (s_best 유지, 온도 리셋).
-        if restart_stall and since_best >= restart_stall and cfg.phase2 is not None:
+        # 마감을 이미 넘겼으면 두 번째 full realize를 시작하지 않는다(마감 후 전용).
+        if (restart_stall and since_best >= restart_stall and cfg.phase2 is not None
+                and not (deadline is not None and time.perf_counter() >= deadline)):
             jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))
             p2j = dataclasses.replace(cfg.phase2, atc_kappa=jk)
             sj = realize(p1.bay, prob_info, pre, p2j, deadline=deadline)
@@ -110,6 +128,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
                 if sj.objective < s_best.objective:
                     s_best = sj
                     stats["best_events"].append([time.perf_counter() - t0, sj.objective])
+                    _emit_best(s_best)
                 T = init_temperature(s.objective, cfg.w_pct)
             stats["restarts"] += 1
             since_best = 0

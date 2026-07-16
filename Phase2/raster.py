@@ -9,6 +9,7 @@ soundness: 마스크는 각 layer convex hull의 superset(단위칸 touch=1). �
 from __future__ import annotations
 
 import math
+import os
 
 import numpy as np
 import shapely
@@ -38,11 +39,15 @@ class Raster:
             self._mask = {}
         self._uge = {}     # j -> (ver, [int32 (H, W)] 층별 suffix union)
         self._scan = {}    # j -> {(i, o): (ver, feas, mx0, my0)}
+        self._cscan = {}   # j -> {(i, o): (ver, total, mx0, my0)} (nestle count 캐시)
         self._field = {}   # j -> (ver, int32 (H+2, W+2) 접촉장, 테두리=벽)
         # 공간 국소 무효화용 변경영역 로그. _dirty[j][v] = 버전 v->v+1 스탬프의
         # 발자국 사각형(8이웃 팽창 1칸 포함, 격자 좌표로 클립). len == ver[j] 불변.
         self._incremental = incremental
         self._dirty = [[] for _ in range(self.n_bays)]
+        # scan 캐시 바이트 상한(초과 시 전량 clear; miss시 재계산이라 비트동일).
+        self._scan_cap = int(os.environ.get("OGC_SCAN_CAP_MB", "600")) * 1_000_000
+        self._scan_bytes = 0
 
     # -- 마스크 ---------------------------------------------------------------
 
@@ -65,9 +70,8 @@ class Raster:
         boxes = shapely.box(mx0 + cs.ravel(), my0 + rs.ravel(),
                             mx0 + cs.ravel() + 1.0, my0 + rs.ravel() + 1.0)
         for k, ring in enumerate(layers):
-            # hull을 rasterize: 정확 게이트 NFP가 convex_decompose(껍질 이하) 기반이라
-            # 마스크는 hull의 superset이어야 [disjoint ⇒ NFP-clear]가 성립(오목만 쓰면
-            # 노치에서 위반). hull은 bbox가 같아 mx0/my0/MH/MW·IFP·stamp 정렬 불변.
+            # hull rasterize 필수: [mask disjoint ⇒ NFP-clear] 계약
+            # ([[ogc-raster-hull-mask-soundness]]). bbox 동일이라 정렬 불변.
             hull = Polygon(ring).convex_hull
             hit = shapely.intersects(hull, boxes)   # 경계 touch 포함 => superset
             mask[k] = hit.reshape(MH, MW).astype(np.uint8)
@@ -161,6 +165,20 @@ class Raster:
             return None
         return (ar0, ar1, ac0, ac1)
 
+    def _account(self, per_bay, key, feas):
+        """scan 캐시 바이트 추적 + 상한 초과 시 전량 clear(비트동일: miss시 재계산).
+        같은 키 재저장은 old 바이트를 빼고 다시 더해 재스캔 과다계수를 피한다."""
+        old = per_bay.get(key)
+        if old is not None:
+            self._scan_bytes -= old[1].nbytes
+        self._scan_bytes += feas.nbytes
+        if self._scan_bytes > self._scan_cap:
+            for d in self._scan.values():
+                d.clear()
+            for d in self._cscan.values():   # count 캐시도 같은 예산에 포함
+                d.clear()
+            self._scan_bytes = feas.nbytes
+
     def scan(self, j: int, i: int, o: int):
         """bay j에서 (i, o)의 모든 정수 앵커 feasibility.
 
@@ -187,6 +205,7 @@ class Raster:
             if A is None:
                 # 변경영역이 이 (i,o)의 어떤 앵커와도 안 겹침 -> 지도 불변.
                 feas = cached[1]
+                self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
                 PROBE.on_scan_hit(j, i, o)
                 return feas, mx0, my0
@@ -204,6 +223,7 @@ class Raster:
                         Vk[ar0:ar1 + MH - 1, ac0:ac1 + MW - 1], (MH, MW))
                     sub += np.einsum('rcij,ij->rc', win, m32[k])
                 feas[ar0:ar1, ac0:ac1] = (sub == 0)
+                self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
                 PROBE.on_scan_miss(j, i, o, cached[0], v1, False,
                                    float(ar1 - ar0) * (ac1 - ac0) * MH * MW,
@@ -231,10 +251,64 @@ class Raster:
             feas = (total == 0)
         if not _cold and cached[1].shape == feas.shape:
             PROBE.on_scan_diff(int(np.count_nonzero(feas != cached[1])), feas.size)
+        self._account(per_bay, (i, o), feas)
         per_bay[(i, o)] = (v1, feas, mx0, my0)
         PROBE.on_scan_miss(j, i, o, _cached_ver, v1, _cold, _cost,
                            int(feas.sum()))
         return feas, mx0, my0
+
+    def count_scan(self, j: int, i: int, o: int):
+        """(i, o)의 앵커별 겹침 카운트 그리드 (total (R, C) int32, mx0, my0).
+
+        scan과 같은 수식/캐시 구조로 total을 유지(nestle: 0<total<=K가 후보).
+        부분영역 갱신은 전체 재계산과 비트동일, 바이트 예산은 scan 캐시와 공유.
+        R/C<=0 이면 total=None(캐시 안 함)."""
+        per_bay = self._cscan.setdefault(j, {})
+        cached = per_bay.get((i, o))
+        v1 = self.ver[j]
+        if cached is not None and cached[0] == v1:
+            return cached[1], cached[2], cached[3]
+        mask, mx0, my0 = self.mask(i, o)
+        K, MH, MW = mask.shape
+        R = self.H[j] - MH + 1
+        C = self.W[j] - MW + 1
+        if R <= 0 or C <= 0:
+            return None, mx0, my0
+        m32 = mask.astype(np.int32)
+        if (self._incremental and cached is not None
+                and cached[1].shape == (R, C)):
+            A = self._affected_region(j, cached[0], v1, MH, MW, R, C)
+            if A is None:
+                total = cached[1]
+                per_bay[(i, o)] = (v1, total, mx0, my0)
+                return total, mx0, my0
+            ar0, ar1, ac0, ac1 = A
+            if (ar1 - ar0) * (ac1 - ac0) < R * C:
+                total = cached[1].copy()
+                uge = self.union_ge(j)
+                sub = np.zeros((ar1 - ar0, ac1 - ac0), dtype=np.int32)
+                for k in range(min(K, len(uge))):
+                    Vk = uge[k]
+                    if not Vk.any():
+                        continue
+                    win = np.lib.stride_tricks.sliding_window_view(
+                        Vk[ar0:ar1 + MH - 1, ac0:ac1 + MW - 1], (MH, MW))
+                    sub += np.einsum('rcij,ij->rc', win, m32[k])
+                total[ar0:ar1, ac0:ac1] = sub
+                self._account(per_bay, (i, o), total)
+                per_bay[(i, o)] = (v1, total, mx0, my0)
+                return total, mx0, my0
+        uge = self.union_ge(j)
+        total = np.zeros((R, C), dtype=np.int32)
+        for k in range(min(K, len(uge))):
+            Vk = uge[k]
+            if not Vk.any():
+                continue
+            win = np.lib.stride_tricks.sliding_window_view(Vk, (MH, MW))
+            total += np.einsum('rcij,ij->rc', win, m32[k])
+        self._account(per_bay, (i, o), total)
+        per_bay[(i, o)] = (v1, total, mx0, my0)
+        return total, mx0, my0
 
     # -- 접촉점수 셀 정렬 (인터록 패킹 레버, 플레이북 v13) ------------------------
 
@@ -253,9 +327,16 @@ class Raster:
         self._field[j] = (self.ver[j], f)
         return f
 
-    def order_cells(self, j: int, i: int, o: int, feas, cap: int):
+    def order_cells(self, j: int, i: int, o: int, feas, cap: int,
+                    futures=None, frag_w: float = 0.0):
         """feas True 앵커를 접촉점수 내림차순(동점 bottom-left)으로 최대 cap개.
-        점수 = 풋프린트 halo(4-이웃 둘레 셀)와 [벽 + 층0 점유]의 겹침 카운트."""
+        점수 = 풋프린트 halo(4-이웃 둘레 셀)와 [벽 + 층0 점유]의 겹침 카운트.
+
+        futures + frag_w > 0 이면 ΔF(파편화 증분) 페널티를 결합(FGD ATC'23 전이):
+        점수 -= frag_w * Σ_m kill_m/(tot_m+1). kill_m = 앵커 (r,c)에 i를 놓을 때
+        bbox가 교차해 죽는 m의 feasible 앵커 수(SAT box-sum, 마스크-교차의 superset
+        = 보수적 과대). futures 원소 = (m, MH_m, MW_m, sat, tot); sat는 IFP-클립된
+        m의 feasible 지도 적분영상 (R_m+1, C_m+1). frag_w == 0 경로는 기존과 동일."""
         rs, cs = np.nonzero(feas)
         if rs.size == 0:
             return []
@@ -272,6 +353,28 @@ class Raster:
         win = np.lib.stride_tricks.sliding_window_view(field, (MH + 2, MW + 2))
         scores = np.einsum('rcij,ij->rc', win, halo)
         vals = scores[rs, cs]
+        if frag_w > 0.0 and futures:
+            pen = np.zeros(rs.size, dtype=np.float64)
+            for (_m, MHm, MWm, sat, tot) in futures:
+                Rm, Cm = sat.shape[0] - 1, sat.shape[1] - 1
+                # i@{(r,c)}는 [r, r+MH)x[c, c+MW) 점유. bbox 교차하는 m 앵커 창
+                # (반열린 상한): q_r ∈ [r-MHm+1, r+MH), q_c ∈ [c-MWm+1, c+MW).
+                r0 = np.clip(rs - MHm + 1, 0, Rm)
+                r1 = np.clip(rs + MH, 0, Rm)
+                c0 = np.clip(cs - MWm + 1, 0, Cm)
+                c1 = np.clip(cs + MW, 0, Cm)
+                kill = (sat[r1, c1] - sat[r0, c1] - sat[r1, c0] + sat[r0, c0])
+                pen += kill.astype(np.float64) / (tot + 1.0)
+            vals = vals - frag_w * pen
         idx = np.lexsort((cs, rs, -vals))
         take = idx if cap is None else idx[:cap]
         return [(int(rs[t]), int(cs[t])) for t in take]
+
+    @staticmethod
+    def sat_of(allow) -> "np.ndarray":
+        """bool/int 지도의 적분영상 (H+1, W+1) int32: sat[a, b] = allow[:a, :b] 합."""
+        H, W = allow.shape
+        sat = np.zeros((H + 1, W + 1), dtype=np.int32)
+        np.cumsum(np.cumsum(allow, axis=0, dtype=np.int32), axis=1,
+                  out=sat[1:, 1:])
+        return sat
