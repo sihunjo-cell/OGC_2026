@@ -86,7 +86,14 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     warm_obj, warm_sol, pre = float("inf"), None, None
     try:
         pre = preprocess(prob_info)
-        warm_obj, warm_sol = _warm_cache(prob_info, pre, configs[0], deadline=deadline)
+        # warm 빌드 예산 상한: max(30s, 0.35T). 30s 하한이라 train 스케일(warm
+        # cold ≤~11s)은 절대 안 물림 = P1~P5 불변. P6급에서만 발동해 절단-but-feasible
+        # warm으로 floor를 깔고 워커에 잔여 예산을 남긴다(워커 늦은 스폰 방지).
+        warm_deadline = deadline
+        if deadline is not None:
+            cap = max(30.0, 0.35 * float(time_limit))
+            warm_deadline = min(deadline, time.perf_counter() + cap)
+        warm_obj, warm_sol = _warm_cache(prob_info, pre, configs[0], deadline=warm_deadline)
     except Exception:
         pre = None
 
@@ -217,9 +224,12 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
         else time.perf_counter() + worker_wall + _wrapup_margin(time_limit)
     )
     for p, _ in procs:
-        remaining = max(1.0, wait_deadline - time.perf_counter())
+        remaining = wait_deadline - time.perf_counter()
         try:
-            p.wait(timeout=remaining)
+            if remaining > 0:
+                p.wait(timeout=remaining)
+            else:
+                p.kill()               # wrapup 초과: 워커당 +1s 낭비 없이 즉시 정리
         except Exception:
             try:
                 p.kill()
