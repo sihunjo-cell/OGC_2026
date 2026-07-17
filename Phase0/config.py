@@ -7,9 +7,7 @@ DP_TOL: float = 0.0
 # 지오메트리 필터 수치 허용오차.
 EPS: float = 1e-9
 
-# NFP 생성 백엔드 (OGC_GEOM 환경변수):
-#   "fast"    -- 기본값: 순수 파이썬 Minkowski + shapely union ("shapely"와 동일 ring).
-#   "shapely" -- 레퍼런스 (shapely MultiPoint Minkowski + unary_union).
-#   "pieces"  -- union 없는 볼록 조각 (실험용, 목적함수 바뀜).
+# NFP 백엔드(OGC_GEOM): fast(기본, shapely와 동일 ring) / shapely(레퍼런스) /
+# pieces(union 없는 볼록 조각 -- 실험용).
 import os as _os
 GEOM_MODE: str = _os.environ.get("OGC_GEOM", "fast").lower()

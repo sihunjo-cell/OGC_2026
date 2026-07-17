@@ -3,7 +3,7 @@
 import os
 import time
 
-from Outer.portfolio import default_portfolio, optimize_portfolio
+from Outer.portfolio import optimize_portfolio
 
 
 def _alns_reserve(timelimit):
@@ -44,15 +44,17 @@ def algorithm(prob_info, timelimit=60):
     except Exception:
         pass
 
-    from Phase0 import preprocess
-    from Outer import alns
+    # deadline이 이미 소진된 상태에서 전체 파이프라인을 재실행하면 timelimit 초과로
+    # 프로세스가 kill된다(대형 문제 사망 경로). 재실행 대신 이미 만들어 둔 floor 반환.
+    from Outer.floor import LAST_FLOOR
+    if LAST_FLOOR["sol"] is not None:
+        return LAST_FLOOR["sol"]
 
-    pre = preprocess(prob_info)
-    s, _ = alns(
-        prob_info,
-        pre,
-        cfg=default_portfolio()[0],
-        deadline=deadline,
-        deadline_s=alns_deadline_s,
-    )
-    return s.solution
+    # floor가 아예 안 만들어짐(preprocess 자체 실패): 최후의 경량 재생성.
+    try:
+        from Phase0 import preprocess
+        from Outer.floor import emergency_floor
+        pre = preprocess(prob_info)
+        return emergency_floor(prob_info, pre).solution
+    except Exception:
+        return None

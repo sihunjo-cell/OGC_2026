@@ -39,3 +39,6 @@ visualization/runs/
 
 # personalized tools
 personalized_tools/
+/scripts/
+/tests/
+/tools/
