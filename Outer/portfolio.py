@@ -39,8 +39,11 @@ def default_portfolio() -> list:
                                         dispatch_beam=True, beam_depth=3, beam_width=8,
                                         beam_top_blocks=4, beam_top_anchors=4,
                                         beam_trigger_queue=8, beam_max_expansions=192)),  # κ1 dyn-on + beam
-        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                        dispatch_dynamic_bay=False)),                  # κ1 dyn-off (37/25 floor)
+        OuterConfig(xi=0.5, seed=7, restart_stall=16,
+                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                        dispatch_serial=True, serial_rule="large_critical",
+                                        serial_top_blocks=6, serial_top_bays=3,
+                                        serial_anchor_cap=8, serial_time_cap=32)),      # serial-SGS large-critical
     ]
 
 

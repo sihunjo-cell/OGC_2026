@@ -12,6 +12,7 @@ from .contract import Phase2Result
 from .collision import _collision_free
 from .crane import crane_feasibility, crane_obstructed
 from .dispatch import dispatch_construct
+from .dispatch_serial import dispatch_construct_serial
 from . import repair as rp
 
 
@@ -98,7 +99,8 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         return None
 
     # ---- 배치: 이벤트 구동 ATC 디스패처 (Phase2.dispatch) --------------------
-    coords, orient, d_entry, d_exit, forced_cons, d_bay = dispatch_construct(
+    dispatch_fn = dispatch_construct_serial if getattr(cfg, "dispatch_serial", False) else dispatch_construct
+    coords, orient, d_entry, d_exit, forced_cons, d_bay = dispatch_fn(
         prob_info, p1_out, pre, cfg, deadline=deadline)
     entry[:] = d_entry
     exit_[:] = d_exit

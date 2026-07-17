@@ -35,6 +35,18 @@ class Phase2Config:
     beam_trigger_queue: int = 8
     beam_max_expansions: int = 256
     beam_congestion_penalty: float = 200.0
+    # Serial SGS worker: select an unscheduled block first, then find its
+    # earliest feasible time/bay/placement against the partial schedule.
+    dispatch_serial: bool = False
+    serial_rule: str = "large_critical"
+    serial_top_blocks: int = 6
+    serial_top_bays: int = 3
+    serial_anchor_cap: int = 8
+    serial_time_cap: int = 32
+    serial_rank_penalty: float = 1000.0
+    serial_area_alpha: float = 0.7
+    serial_long_alpha: float = 0.5
+    serial_dynamic_bay: bool = True
 
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2
