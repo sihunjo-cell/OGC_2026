@@ -103,6 +103,8 @@ def dispatch_construct_serial(prob_info: dict, p1_out, pre, cfg, deadline=None):
     def _candidate_times(i, j):
         times = {int(R[i])}
         for k in scheduled_by_bay[j]:
+            if entry[k] >= R[i]:
+                times.add(int(entry[k]))
             if exit_[k] >= R[i]:
                 times.add(int(exit_[k]))
         return sorted(times)[:time_cap]
@@ -113,7 +115,7 @@ def dispatch_construct_serial(prob_info: dict, p1_out, pre, cfg, deadline=None):
         if entry_res and crane_obstructed(i, o, pos, entry_res, coords, orient, pre):
             return False
         for k in overlap_res:
-            if t < entry[k] < xt and crane_blocks_resident(i, o, pos, k, coords, orient, pre):
+            if t <= entry[k] < xt and crane_blocks_resident(i, o, pos, k, coords, orient, pre):
                 return False
             if t < exit_[k] <= xt and crane_blocks_resident(i, o, pos, k, coords, orient, pre):
                 return False
@@ -136,7 +138,7 @@ def dispatch_construct_serial(prob_info: dict, p1_out, pre, cfg, deadline=None):
         xt = t + P[i]
         residents = scheduled_by_bay[j]
         overlap_res = [k for k in residents if entry[k] < xt and t < exit_[k]]
-        entry_res = [k for k in residents if entry[k] < t < exit_[k]]
+        entry_res = [k for k in residents if entry[k] <= t < exit_[k]]
         exit_res = [k for k in residents if entry[k] < xt <= exit_[k]]
         raster = _scratch_raster(j, overlap_res)
         actions = []
