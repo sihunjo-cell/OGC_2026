@@ -7,7 +7,14 @@ Outer.operators -- 적응적 연산자 선택(AOS).
 
 from __future__ import annotations
 
+import hashlib
 from collections import defaultdict
+
+
+def _vkey(sol):
+    """Solution.key()(5×n 튜플)의 16바이트 다이제스트. 멤버십 판정은 동일하되
+    방문집합 메모리를 O(n)/키 -> 상수화(대형·장예산 누적성장 상한)."""
+    return hashlib.blake2b(repr(sol.key()).encode(), digest_size=16).digest()
 
 
 class AOS:
@@ -19,6 +26,9 @@ class AOS:
         self.W_ins = {o: 1.0 for o in self.iops}
         self._reset_tallies()
         self.visited = set()
+
+    def mark_visited(self, sol):
+        self.visited.add(_vkey(sol))
 
     def _reset_tallies(self):
         self.scores_rem = defaultdict(float)
@@ -47,7 +57,7 @@ class AOS:
         return op_rem, op_ins
 
     def score_update(self, s_new, s_cur, s_best, op_rem, op_ins, accepted):
-        key = s_new.key()
+        key = _vkey(s_new)
         if key in self.visited:
             return
         self.visited.add(key)

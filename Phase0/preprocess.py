@@ -24,8 +24,6 @@ class PRE:
     bbox: list       # bbox[i][o]    -> (min_x, min_y, max_x, max_y)
     area: list       # area[i][o]    -> float
     IFP: list        # IFP[i][o][j]  -> ((x_lo, x_hi), (y_lo, y_hi))
-    CO: set          # {(i, n)}  동시 존재 후보 쌍 (i < n)
-    co_adj: list     # co_adj[i] -> CO에서 i의 파트너 집합
     nfp: NFPCache    # lazy same-level / crane NFP 저장소
 
     # -- 메타 -----------------------------------------------------------------
@@ -41,7 +39,7 @@ class PRE:
             u=const["u"], Smax=const["Smax"],
             EST=const["EST"], slack=const["slack"],
             poly=geom["poly"], bbox=geom["bbox"], area=geom["area"],
-            IFP=geom["IFP"], CO=geom["CO"], co_adj=geom["co_adj"], nfp=geom["nfp"],
+            IFP=geom["IFP"], nfp=geom["nfp"],
             n_blocks=geom["n_blocks"], n_bays=geom["n_bays"],
         )
 

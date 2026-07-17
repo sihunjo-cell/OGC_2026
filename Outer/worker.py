@@ -5,9 +5,11 @@ Outer.worker -- run one portfolio member in a separate process.
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import pickle
 import sys
+import tempfile
 import time
 
 _WRITE_MARGIN = 3.0
@@ -32,6 +34,25 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
         sys.path.insert(0, str(here))
 
     result = {"obj": float("inf"), "solution": None}
+
+    def _atomic_write(payload):
+        # tmp + os.replace: 부모는 항상 완전한 파일만 본다. best 갱신마다 호출하므로
+        # 워커가 중간에 죽어도 마지막 best가 out_path에 남는다.
+        d = os.path.dirname(out_path) or "."
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".w", suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f)
+            os.replace(tmp, out_path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    def _on_best(obj, solution):
+        _atomic_write({"obj": float(obj), "solution": solution})
+
     try:
         from Outer import alns
         from Outer.portfolio import default_portfolio
@@ -44,13 +65,19 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
         alns_budget = None
         if deadline is None:
             alns_budget = max(1.0, wall_budget - (time.perf_counter() - t0) - _WRITE_MARGIN)
+        # 부모의 절대 deadline을 자기 시계 예산으로도 상한(시계 원점 가정 방어).
+        deadline_eff = deadline
+        if deadline is not None:
+            deadline_eff = min(deadline,
+                               time.perf_counter() + max(1.0, wall_budget - _WRITE_MARGIN))
         s, _ = alns(
             prob_info,
             pre,
             alns_budget,
             cfg,
-            deadline=deadline,
+            deadline=deadline_eff,
             deadline_s=deadline_s,
+            on_best=_on_best,
         )
         result = {
             "obj": float(s.objective) if s.feasible else float("inf"),
@@ -64,8 +91,7 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
             "error": traceback.format_exc()[-1000:],
         }
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(result, f)
+    _atomic_write(result)
 
 
 if __name__ == "__main__":

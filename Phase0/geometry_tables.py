@@ -4,6 +4,7 @@ area, IFP), 동시 존재 쌍 집합, lazy No-Fit-Polygon 캐시."""
 from __future__ import annotations
 
 import math
+import os
 from typing import Optional
 
 from .config import DP_TOL, GEOM_MODE
@@ -29,6 +30,9 @@ class NFPCache:
         self._mode = (mode or GEOM_MODE)
         self._cache: dict = {}       # (i,n,oi,on,ki,kj) -> pieces/rings
         self._decomp: dict = {}      # (i,o,k) -> 볼록 분할 (fast/pieces 경로)
+        # 엔트리 상한(초과 시 clear; 순수 메모라 결과 비트동일). 프로세스-수명
+        # 무한성장을 막는다. train 스케일선 무발동.
+        self._cap = int(os.environ.get("OGC_NFP_CAP", "250000"))
 
     def _layer(self, i: int, o: int, k: int):
         layers = self._poly[i][o]
@@ -66,6 +70,9 @@ class NFPCache:
             A = self._decompose(i, oi, k_i)
             B = self._decompose(n, on, k_j)
             rings = nfp_rings_hybrid(A, B) if (A and B) else []
+        if len(self._cache) >= self._cap:
+            self._cache.clear()
+            self._decomp.clear()
         self._cache[key] = rings
         return rings
 
@@ -86,7 +93,6 @@ def precompute_geometry(prob_info: dict, dp_tol: Optional[float] = None,
       poly[i][o][k] -> [(x,y)] layer 정점; bbox[i][o]; area[i][o] (layer 합)
       IFP[i][o][j]  -> ((x_lo,x_hi),(y_lo,y_hi)) 정수 기준점 범위. x_lo > x_hi
                        (또는 y_lo > y_hi)면 block이 bay j에 안 들어감.
-      CO            -> [R,D] 창이 겹치는 {(i,n), i<n}; co_adj[i].
       nfp           -> lazy NFPCache; n_blocks, n_bays.
     """
     if dp_tol is None:
@@ -131,20 +137,6 @@ def precompute_geometry(prob_info: dict, dp_tol: Optional[float] = None,
         area.append(block_area)
         ifp.append(block_ifp)
 
-    # 동시 존재 후보 쌍: [R_i,D_i]와 [R_n,D_n] 창이 겹침(양끝 포함). 동시 존재를
-    # 보장하진 않는 휴리스틱 사전 필터. 빠진 쌍은 NFPCache가 필요 시 계산.
-    R = [blk["release_time"] for blk in blocks]
-    D = [blk["due_date"] for blk in blocks]
-    CO: set = set()
-    co_adj: list = [set() for _ in range(n_blocks)]
-    for i in range(n_blocks):
-        Ri, Di = R[i], D[i]
-        for n in range(i + 1, n_blocks):
-            if Ri <= D[n] and R[n] <= Di:      # 창이 겹침(양끝 포함)
-                CO.add((i, n))
-                co_adj[i].add(n)
-                co_adj[n].add(i)
-
     nfp = NFPCache(poly, mode=geom_mode)
 
     return {
@@ -152,8 +144,6 @@ def precompute_geometry(prob_info: dict, dp_tol: Optional[float] = None,
         "bbox": bbox,
         "area": area,
         "IFP": ifp,
-        "CO": CO,
-        "co_adj": co_adj,
         "nfp": nfp,
         "n_blocks": n_blocks,
         "n_bays": n_bays,
