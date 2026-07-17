@@ -7,7 +7,7 @@
 > ▸ **[5부]까지로** 밀도 회수 · Z1-aware 배정 · 동적 bay · 탐색 가속 · 배포 안전판(dyn-on/off
 > 페어, stall-restart)이 섰다. 그 위에서 두 가지가 새로 드러났다. 하나는 **운영의 자격 조건**
 > — 아무리 좋은 탐색도 시간 안에 feasible을 못 돌려주면 0점이다. 다른 하나는 [1부]가 남겨둔
-> **계약의 가격표** — soundness를 위해 mask를 convex hull superset로 유지했는데, 그 보수성이
+> **계약의 가격표** — soundness를 위해 mask를 convex hull superset로 유지했는데, 그 보수성이  
 > 실제로 얼마를 잃게 하는지 한 번도 재보지 않았다. 이번 장은 이 둘의 해소다.
 
 ---

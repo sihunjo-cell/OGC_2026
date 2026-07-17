@@ -190,6 +190,9 @@ class Raster:
                 feas = cached[1]
                 self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
+                ct = self._cscan.get(j, {}).get((i, o))
+                if ct is not None and ct[0] == cached[0]:      # count 캐시도 동반 유효
+                    self._cscan[j][(i, o)] = (v1, ct[1], ct[2], ct[3])
                 PROBE.on_scan_hit(j, i, o)
                 return feas, mx0, my0
             ar0, ar1, ac0, ac1 = A
@@ -208,6 +211,13 @@ class Raster:
                 feas[ar0:ar1, ac0:ac1] = (sub == 0)
                 self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
+                cs_bay = self._cscan.get(j)
+                ct = cs_bay.get((i, o)) if cs_bay is not None else None
+                if ct is not None and ct[0] == cached[0] and ct[1].shape == (R, C):
+                    tot2 = ct[1].copy()                        # 같은 sub로 count도 동기 갱신
+                    tot2[ar0:ar1, ac0:ac1] = sub
+                    self._account(cs_bay, (i, o), tot2)
+                    cs_bay[(i, o)] = (v1, tot2, mx0, my0)
                 PROBE.on_scan_miss(j, i, o, cached[0], v1, False,
                                    float(ar1 - ar0) * (ac1 - ac0) * MH * MW,
                                    int(feas.sum()))
@@ -232,6 +242,10 @@ class Raster:
                 win = np.lib.stride_tricks.sliding_window_view(Vk, (MH, MW))
                 total += np.einsum('rcij,ij->rc', win, m32[k])
             feas = (total == 0)
+            cs_bay = self._cscan.get(j)
+            if cs_bay is not None and (i, o) in cs_bay:        # 기존 count 사용처만 carry
+                self._account(cs_bay, (i, o), total)
+                cs_bay[(i, o)] = (v1, total, mx0, my0)
         if not _cold and cached[1].shape == feas.shape:
             PROBE.on_scan_diff(int(np.count_nonzero(feas != cached[1])), feas.size)
         self._account(per_bay, (i, o), feas)
