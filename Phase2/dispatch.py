@@ -79,6 +79,9 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         bay_occ = [0.0] * pre.n_bays
     kappa = max(1e-9, float(cfg.atc_kappa))
     alpha = float(cfg.atc_alpha)
+    # 게이트 쌍판정 memo (판정-동치 -- 근거·한계는 issue/05 Results)
+    gate_memo: dict = {}
+    gate_omemo: dict = {}
 
     coords: dict = {}
     orient: dict = {}
@@ -97,12 +100,27 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
 
     def _exact_gate(i, j, o, pos, xt):
         # 시간축 crane 검사(역방향+내 exit). 경계 규칙은 메모리 ogc-code-invariants 참조.
+        # 배치 좌표는 디코드 내 write-once -> 쌍판정은 순수 = 디코드-스코프 memo 유효.
         for k in placed[j]:
-            if exit_[k] <= xt and crane_blocks_resident(i, o, pos, k, coords, orient, pre):
-                return False
+            if exit_[k] <= xt:
+                key = (i, o, pos, k)
+                v = gate_memo.get(key)
+                if v is None:
+                    v = crane_blocks_resident(i, o, pos, k, coords, orient, pre)
+                    if len(gate_memo) < 200000:
+                        gate_memo[key] = v
+                if v:
+                    return False
         stayers = [k for k in placed[j] if exit_[k] >= xt]
-        if stayers and crane_obstructed(i, o, pos, stayers, coords, orient, pre):
-            return False
+        if stayers:
+            key = (i, o, pos, tuple(stayers))
+            v = gate_omemo.get(key)
+            if v is None:
+                v = crane_obstructed(i, o, pos, stayers, coords, orient, pre)
+                if len(gate_omemo) < 200000:
+                    gate_omemo[key] = v
+            if v:
+                return False
         return True
 
     def _try_nestle(i, j, t, xt):

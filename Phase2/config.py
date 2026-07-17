@@ -30,7 +30,6 @@ class Phase2Config:
     dispatch_nestle_cap: int = 12
     dispatch_nestle_fast: bool = True    # 판정-동치 numba 가속 (False = 순수 shapely)
     dispatch_nestle_flop_cap: float = 2e9  # 디코드당 FLOP 상한 (fragdelta 캡과 동형)
-
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2
     force_retry_phase_b: bool = True    # force_place 전 부분점유 슬롯 재시도
