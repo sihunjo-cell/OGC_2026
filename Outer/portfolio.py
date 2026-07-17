@@ -30,8 +30,9 @@ def default_portfolio() -> list:
                dispatch_nestle_flop_cap=2e10)
     # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
+    cx = _cyclex_env()
     return [
-        OuterConfig(xi=0.3, seed=1, restart_stall=8,
+        OuterConfig(xi=0.3, seed=1, restart_stall=8, **cx,
                     phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, ΔF)
         OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
                                                         dispatch_dynamic_bay=False)),                  # κ3 dyn-off (floor)
@@ -42,6 +43,25 @@ def default_portfolio() -> list:
     ]
 
 
+def _cyclex_env() -> dict:
+    """Optional switch: OGC_CYCLEX=stall[,nodes[,max_cycles]]."""
+    raw = os.environ.get("OGC_CYCLEX", "").strip()
+    if not raw:
+        return {}
+    cfg = {"cyclex_stall": 8, "cyclex_nodes": 24, "cyclex_max_cycles": 20000}
+    if raw in {"1", "true", "TRUE", "on", "ON", "yes", "YES"}:
+        return cfg
+    try:
+        parts = [p.strip() for p in raw.split(",")]
+        if len(parts) > 0 and parts[0]:
+            cfg["cyclex_stall"] = max(1, int(float(parts[0])))
+        if len(parts) > 1 and parts[1]:
+            cfg["cyclex_nodes"] = max(2, int(float(parts[1])))
+        if len(parts) > 2 and parts[2]:
+            cfg["cyclex_max_cycles"] = max(1, int(float(parts[2])))
+    except Exception:
+        pass
+    return cfg
 def _warm_cache(prob_info: dict, pre, cfg: OuterConfig, deadline=None):
     from Phase1 import BuildBayAssignment
     from .realize import realize

@@ -15,6 +15,7 @@ from .destroy import destroy
 from .operators import AOS
 from .realize import realize
 from .repair import repair
+from .cyclex import propose_cyclex
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
@@ -57,6 +58,11 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "accepted": 0,
         "improved": 0,
         "restarts": 0,
+        "cyclex": 0,
+        "cyclex_realized": 0,
+        "cyclex_improved": 0,
+        "cyclex_disabled": 0,
+        "cyclex_time_s": 0.0,
         "f0": s.objective,
         "f_best": s_best.objective,
         "elapsed_s": 0.0,
@@ -67,6 +73,8 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     }
     # 정체 재시작 (κ-지터, s_best 유지)
     restart_stall = int(getattr(cfg, "restart_stall", 0) or 0)
+    cyclex_stall = int(getattr(cfg, "cyclex_stall", 0) or 0)
+    since_cyclex = 0
     since_best = 0
     base_kappa = float(cfg.phase2.atc_kappa) if cfg.phase2 is not None else 2.0
 
@@ -107,10 +115,33 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             stats["improved"] += 1
             stats["best_events"].append([time.perf_counter() - t0, s2.objective])
             since_best = 0
+            since_cyclex = 0
             _emit_best(s_best)
         else:
             since_best += 1
+            since_cyclex += 1
 
+        # cycle-exchange stall probe: proxy proposes, realize decides.
+        if (cyclex_stall and since_cyclex >= cyclex_stall
+                and not (deadline is not None and time.perf_counter() >= deadline)):
+            t_cx = time.perf_counter()
+            bayx = propose_cyclex(s_best, prob_info, pre, cfg, rng, deadline=deadline)
+            stats["cyclex"] += 1
+            since_cyclex = 0
+            if bayx is not None and not (deadline is not None and time.perf_counter() >= deadline):
+                stats["cyclex_realized"] += 1
+                sx = realize(bayx, prob_info, pre, cfg.phase2, deadline=deadline)
+                if sx.objective < s_best.objective:
+                    s = sx
+                    s_best = sx
+                    stats["accepted"] += 1
+                    stats["improved"] += 1
+                    stats["cyclex_improved"] += 1
+                    stats["best_events"].append([time.perf_counter() - t0, sx.objective])
+                    since_best = 0
+                    since_cyclex = 0
+                    _emit_best(s_best)
+            stats["cyclex_time_s"] += time.perf_counter() - t_cx
         # 정체 재시작 (마감 후 미진입)
         if (restart_stall and since_best >= restart_stall and cfg.phase2 is not None
                 and not (deadline is not None and time.perf_counter() >= deadline)):

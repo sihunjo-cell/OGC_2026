@@ -37,6 +37,11 @@ class OuterConfig:
 
     # -- 정체 재시작 --
     restart_stall: int = 0             # N회 연속 best 미갱신 시 κ-지터 재시작 (0=끔)
+    # -- O.6 cycle exchange probe ---------------------------------------------
+    cyclex_stall: int = 0              # 0=off; probe after N non-improving iters
+    cyclex_nodes: int = 24             # top costly blocks considered as cycle nodes
+    cyclex_max_cycles: int = 20000     # proxy evaluations per probe
+    cyclex_min_proxy_gain: float = 0.0 # require proxy delta < -gain
 
     # -- 기타 ------------------------------------------------------------------
     seed: int = 0
