@@ -16,6 +16,7 @@ import numpy as np
 
 from . import repair as rp
 from ._diag import PROBE
+from .collision import _collision_free
 from .crane import crane_blocks_resident, crane_obstructed
 from .raster import Raster
 
@@ -65,6 +66,11 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         bay_occ = [0.0] * pre.n_bays
     kappa = max(1e-9, float(cfg.atc_kappa))
     alpha = float(cfg.atc_alpha)
+    weights = prob_info.get("weights", {})
+    w1 = float(weights.get("w1", 1.0))
+    w3 = float(weights.get("w3", 1.0))
+    S = [b.get("bay_preferences", []) for b in blocks]
+    Smax = getattr(pre, "Smax", [max(s) if s else 0.0 for s in S])
 
     coords: dict = {}
     orient: dict = {}
@@ -81,18 +87,24 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         return (1.0 / ((anorm ** alpha) * max(1, P[i]))) \
             * math.exp(-max(0.0, slack) / (kappa * pbar))
 
+    def _gate_with(i, j, o, pos, xt, placed_j, coords_map, orient_map, exit_map):
+        if not _collision_free(i, o, pos, placed_j, coords_map, orient_map, pre):
+            return False
+        for k in placed_j:
+            if exit_map[k] <= xt and crane_blocks_resident(
+                    i, o, pos, k, coords_map, orient_map, pre):
+                return False
+        stayers = [k for k in placed_j if exit_map[k] >= xt]
+        if stayers and crane_obstructed(i, o, pos, stayers, coords_map, orient_map, pre):
+            return False
+        return True
+
     def _exact_gate(i, j, o, pos, xt):
         # scan이 증명 못 하는 시간축 두 가지만 정확 검사:
         #  (a) 내 체류 중 exit하는 상주의 반출을 내가 막는가 (역방향 차단)
         #  (b) 내 exit(xt) 시점 잔류 상주가 내 반출을 막는가
         # 경계(exit == xt)는 양쪽 모두에 포함 = 이중 보수 (id tie-break 미러 회피).
-        for k in placed[j]:
-            if exit_[k] <= xt and crane_blocks_resident(i, o, pos, k, coords, orient, pre):
-                return False
-        stayers = [k for k in placed[j] if exit_[k] >= xt]
-        if stayers and crane_obstructed(i, o, pos, stayers, coords, orient, pre):
-            return False
-        return True
+        return _gate_with(i, j, o, pos, xt, placed[j], coords, orient, exit_)
 
     def _try_admit(i, j, t, rank=0, earlier=0):
         xt = t + P[i]
@@ -136,6 +148,162 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                          feas_anchors, cells_tried, gate_rej)
         return False
 
+    def _pref_gap(i, j):
+        pref = S[i][j] if j < len(S[i]) else 0.0
+        return Smax[i] - pref
+
+    def _beam_bay_candidates(i, node, t):
+        cands = [node["bay"][i]]
+        if dyn_bay and t + P[i] > D[i]:
+            alts = sorted((b for b in elig_bays[i] if b != node["bay"][i]),
+                          key=lambda b: node["bay_occ"][b] / bay_area[b])
+            cands.extend(alts[:2])
+        out = []
+        for b in cands:
+            if b not in out:
+                out.append(b)
+        return out
+
+    def _beam_candidate_actions(i, j, t, node, rank=0):
+        xt = t + P[i]
+        cap = max(1, int(getattr(cfg, "beam_top_anchors", 4) or 4))
+        actions = []
+        for o in range(len(pre.poly[i])):
+            (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
+            if x_lo > x_hi or y_lo > y_hi:
+                continue
+            feas, mx0, my0 = raster.scan(j, i, o)
+            if feas.size == 0:
+                continue
+            allow = np.zeros_like(feas)
+            r_lo, r_hi = max(0, y_lo + my0), min(feas.shape[0] - 1, y_hi + my0)
+            c_lo, c_hi = max(0, x_lo + mx0), min(feas.shape[1] - 1, x_hi + mx0)
+            if r_lo > r_hi or c_lo > c_hi:
+                continue
+            allow[r_lo:r_hi + 1, c_lo:c_hi + 1] = feas[r_lo:r_hi + 1, c_lo:c_hi + 1]
+            for anchor_rank, (r, c) in enumerate(raster.order_cells(j, i, o, allow, cap)):
+                pos = (int(c) - mx0, int(r) - my0)
+                if not _gate_with(i, j, o, pos, xt, node["placed"][j],
+                                  node["coords"], node["orient"], node["exit"]):
+                    continue
+                util = node["bay_occ"][j] / bay_area[j] if dyn_bay else 0.0
+                tard = max(0, xt - D[i])
+                cost = (w1 * tard
+                        + w3 * _pref_gap(i, j)
+                        + float(getattr(cfg, "beam_congestion_penalty", 200.0)) * util * util
+                        + 0.001 * (rank + anchor_rank))
+                actions.append({
+                    "block": i, "bay": j, "orient": o, "pos": pos,
+                    "entry": t, "exit": xt, "cost": cost,
+                })
+        actions.sort(key=lambda a: (a["cost"], a["block"], a["bay"], a["orient"], a["pos"]))
+        return actions[:cap]
+
+    def _beam_apply(node, action):
+        i, j = action["block"], action["bay"]
+        nxt = {
+            "placed": [x.copy() for x in node["placed"]],
+            "coords": dict(node["coords"]),
+            "orient": dict(node["orient"]),
+            "entry": list(node["entry"]),
+            "exit": list(node["exit"]),
+            "bay": list(node["bay"]),
+            "bay_occ": list(node["bay_occ"]),
+            "remaining": [x for x in node["remaining"] if x != i],
+            "score": node["score"] + action["cost"],
+            "first": node["first"] if node["first"] is not None else action,
+        }
+        nxt["coords"][i] = action["pos"]
+        nxt["orient"][i] = action["orient"]
+        nxt["entry"][i] = action["entry"]
+        nxt["exit"][i] = action["exit"]
+        nxt["bay"][i] = j
+        nxt["placed"][j].append(i)
+        if dyn_bay:
+            nxt["bay_occ"][j] += amin[i]
+        return nxt
+
+    def _beam_eval(node, t):
+        top = sorted(node["remaining"], key=lambda b: (-_prio(b, t), b))[:8]
+        lb_tard = sum(max(0, t + P[i] - D[i]) for i in top)
+        return node["score"] + 0.25 * w1 * lb_tard
+
+    def _critical_event(j, t):
+        if not bool(getattr(cfg, "dispatch_beam", False)):
+            return False
+        trigger_q = int(getattr(cfg, "beam_trigger_queue", 8) or 8)
+        if len(queue[j]) >= trigger_q:
+            return True
+        top_n = max(1, int(getattr(cfg, "beam_top_blocks", 4) or 4))
+        top = sorted(queue[j], key=lambda b: (-_prio(b, t), b))[:top_n]
+        if any(t + P[i] > D[i] for i in top):
+            return True
+        if dyn_bay and len(queue[j]) >= max(2, trigger_q // 2) and any(len(elig_bays[i]) > 1 for i in top):
+            return True
+        return False
+
+    def _beam_first_action(j, t):
+        top_blocks = max(1, int(getattr(cfg, "beam_top_blocks", 4) or 4))
+        depth = max(1, int(getattr(cfg, "beam_depth", 3) or 3))
+        width = max(1, int(getattr(cfg, "beam_width", 8) or 8))
+        max_exp = max(1, int(getattr(cfg, "beam_max_expansions", 256) or 256))
+        root = {
+            "placed": [x.copy() for x in placed],
+            "coords": dict(coords),
+            "orient": dict(orient),
+            "entry": list(entry),
+            "exit": list(exit_),
+            "bay": list(bay),
+            "bay_occ": list(bay_occ) if dyn_bay else [0.0] * pre.n_bays,
+            "remaining": list(queue[j]),
+            "score": 0.0,
+            "first": None,
+        }
+        beam = [root]
+        expansions = 0
+        for _ in range(depth):
+            nxt = []
+            for node in beam:
+                choices = sorted(node["remaining"], key=lambda b: (-_prio(b, t), b))[:top_blocks]
+                for rank, i in enumerate(choices):
+                    for bj in _beam_bay_candidates(i, node, t):
+                        for action in _beam_candidate_actions(i, bj, t, node, rank):
+                            nxt.append(_beam_apply(node, action))
+                            expansions += 1
+                            if expansions >= max_exp:
+                                break
+                        if expansions >= max_exp:
+                            break
+                    if expansions >= max_exp:
+                        break
+                if expansions >= max_exp:
+                    break
+            if not nxt:
+                break
+            nxt.sort(key=lambda nd: _beam_eval(nd, t))
+            beam = nxt[:width]
+            if expansions >= max_exp:
+                break
+        best = min(beam, key=lambda nd: _beam_eval(nd, t))
+        return best["first"]
+
+    def _commit_action(action, from_j):
+        i, j = action["block"], action["bay"]
+        if not _gate_with(i, j, action["orient"], action["pos"], action["exit"],
+                          placed[j], coords, orient, exit_):
+            return False
+        coords[i] = action["pos"]
+        orient[i] = action["orient"]
+        entry[i] = action["entry"]
+        exit_[i] = action["exit"]
+        raster.add(j, i, action["orient"], action["pos"])
+        placed[j].append(i)
+        bay[i] = j
+        queue[from_j].remove(i)
+        if dyn_bay:
+            bay_occ[j] += amin[i]
+        return True
+
     # -- 이벤트 루프 -----------------------------------------------------------
     order = sorted(range(n), key=lambda i: (R[i], i))
     ri = 0
@@ -172,6 +340,14 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                 continue
             _earlier = 0     # 진단: 같은 tick·bay 에서 앞서 admit 된 수 (캐스케이드 깊이)
             _fails = 0       # 마지막 admit 이후 연속 실패 수 (조기중단 카운터)
+            if _critical_event(j, t):
+                action = _beam_first_action(j, t)
+                if action is not None and _commit_action(action, j):
+                    _earlier += 1
+                    x = int(exit_[action["block"]])
+                    if x not in in_ev:
+                        heapq.heappush(ev, x)
+                        in_ev.add(x)
             for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break

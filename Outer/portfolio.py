@@ -35,7 +35,10 @@ def default_portfolio() -> list:
         OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
                                                         dispatch_dynamic_bay=False)),                  # κ3 dyn-off (32 floor)
         OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24)),  # κ1 dyn-on (혼잡 최강, 재시작16)
+                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                        dispatch_beam=True, beam_depth=3, beam_width=8,
+                                        beam_top_blocks=4, beam_top_anchors=4,
+                                        beam_trigger_queue=8, beam_max_expansions=192)),  # κ1 dyn-on + beam
         OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                         dispatch_dynamic_bay=False)),                  # κ1 dyn-off (37/25 floor)
     ]

@@ -24,6 +24,17 @@ class Phase2Config:
     # 못 푸는 no_space(다른 bay엔 자리 있음)를 해소. 여유 블록은 제 bay 대기.
     # False = 고정-bay 동작(포트폴리오의 dyn-off floor 워커가 사용).
     dispatch_dynamic_bay: bool = True
+    # Critical-event MPC beam. Greedy remains the default; when enabled, a
+    # pressured bay commits one lookahead-selected admission before falling
+    # back to the normal greedy loop.
+    dispatch_beam: bool = False
+    beam_depth: int = 3
+    beam_width: int = 8
+    beam_top_blocks: int = 4
+    beam_top_anchors: int = 4
+    beam_trigger_queue: int = 8
+    beam_max_expansions: int = 256
+    beam_congestion_penalty: float = 200.0
 
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2
