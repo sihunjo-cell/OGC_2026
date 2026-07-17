@@ -1,8 +1,4 @@
-"""Phase1.common -- Phase 0 출력(PRE)과 prob_info 위에서 쓰는 공용 헬퍼.
-
-bay 배정 단계에선 orientation을 확정하지 않으므로, 면적/DFF 체크용으로는
-최소 면적 orientation 하나를 대표 footprint로 쓴다.
-"""
+"""Phase1 공용 헬퍼 (대표 orientation = 최소 bbox 면적)."""
 
 from __future__ import annotations
 
@@ -20,7 +16,7 @@ def _shoelace(pts) -> float:
 
 
 def eligible(pre, i: int, j: int) -> bool:
-    """블록 i가 최소 한 orientation으로 bay j에 들어가면 True (IFP 비어있지 않음)."""
+    """어느 orientation으로든 bay j에 들어가면 True."""
     for o in range(len(pre.IFP[i])):
         (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
         if x_lo <= x_hi and y_lo <= y_hi:
@@ -29,7 +25,7 @@ def eligible(pre, i: int, j: int) -> bool:
 
 
 def assign_orientation(pre, i: int) -> int:
-    """bounding-box 면적이 가장 작은 orientation (가장 타이트한 표현)."""
+    """최소 bbox 면적 orientation."""
     best_o, best_a = 0, None
     for o in range(len(pre.bbox[i])):
         x0, y0, x1, y1 = pre.bbox[i][o]
@@ -40,14 +36,14 @@ def assign_orientation(pre, i: int) -> int:
 
 
 def block_wh(pre, i: int) -> tuple:
-    """DFF 체크용 블록 i의 대표 (width, height) bounding box."""
+    """대표 (width, height)."""
     o = assign_orientation(pre, i)
     x0, y0, x1, y1 = pre.bbox[i][o]
     return (x1 - x0, y1 - y0)
 
 
 def footprint_area(pre, i: int) -> float:
-    """블록 i의 바닥 투영 면적 (가장 큰 layer 폴리곤, 타이트한 orientation 기준)."""
+    """바닥 투영 면적 (최대 layer)."""
     o = assign_orientation(pre, i)
     layers = pre.poly[i][o]
     if not layers:

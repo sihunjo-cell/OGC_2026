@@ -1,10 +1,5 @@
 # Phase2/dispatch.py
-"""Phase2.dispatch -- 이벤트 구동 ATC 디스패처("the pump").
-
-bay 배정(Z2/Z3)은 고정하고 ENTRY/EXIT 타이밍과 (x,y,o) 배치만 시간순으로 결정.
-이벤트(release + 예정 exit)마다: ① exit 제거 ② release 큐잉 ③ ATC 우선순위 admission
-(raster.scan 앵커 → IFP 클립 → 접촉순 셀 → 시간축 정확 게이트). 같은 tick은 EXIT
-먼저(핸드오프). 미배치 잔여는 force_place로 완결(출력은 항상 완전한 feasible 배정)."""
+"""이벤트 구동 ATC 디스패처: bay 배정 고정, 배치·타이밍을 시간순 결정(잔여는 강제 완결)."""
 
 from __future__ import annotations
 
@@ -21,10 +16,7 @@ from .raster import Raster
 
 
 def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
-    """반환 (coords, orient, entry, exit_, forced_cons, bay).
-
-    동적 bay(dispatch_dynamic_bay)가 admission 실패 시 급한 블록을 다른 bay로
-    재라우팅할 수 있어 bay가 입력과 달라질 수 있으므로 최종 bay도 함께 반환한다."""
+    """반환 (coords, orient, entry, exit_, forced_cons, bay) -- bay는 재라우팅 반영 최종값."""
     blocks = prob_info["blocks"]
     n = len(blocks)
     P = [b["processing_time"] for b in blocks]
@@ -33,8 +25,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     bay = list(p1_out.bay)
 
     dyn_bay = bool(getattr(cfg, "dispatch_dynamic_bay", True))
-    # 동적 bay: 블록별 배치가능(IFP 유효) 후보 bay 집합을 사전계산(선호순 = 동점 tiebreak;
-    # 실제 라우팅은 admission 실패 시점에 least-util 순으로 재정렬해 선택).
+    # 블록별 eligible bay 사전계산(선호순; 라우팅 시 least-util로 재정렬)
     elig_bays = None
     if dyn_bay:
         elig_bays = [[] for _ in range(n)]
@@ -53,13 +44,20 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     incremental=bool(getattr(cfg, "scan_incremental", True)),
                     mask_share=bool(getattr(cfg, "mask_cache_share", False)))
     fail_stop = int(getattr(cfg, "dispatch_admit_fail_stop", 0) or 0)
-    # ΔF 항(issue/05): FLOP 프록시 누적 상한 초과 시 잔여 결정론적 셧오프(비트동일).
+    # ΔF 파편화 항 (FLOP 캡 초과 시 결정론적 셧오프)
     frag_w = float(getattr(cfg, "dispatch_fragdelta", 0.0) or 0.0)
     frag_q = int(getattr(cfg, "fragdelta_q", 4) or 0)
     frag_cap = float(getattr(cfg, "fragdelta_flop_cap", 2e9))
-    frag_hor = int(getattr(cfg, "fragdelta_horizon", 0) or 0)
+    frag_dens = float(getattr(cfg, "fragdelta_dens_hi", 0.0) or 0.0)
     frag_flops, frag_alive = 0.0, True
-    # hull-nestle 회수(issue/06): FLOP 캡은 fragdelta와 동형(결정론적 셧오프).
+
+    def _dens0(j):
+        # bay j의 layer-0 점유밀도 (ΔF 형성기 게이트용)
+        g = raster.occ[j].get(0)
+        if g is None:
+            return 0.0
+        return float(np.count_nonzero(g)) / g.size
+    # hull-nestle 회수 (mask 전멸 시 정밀 재검사)
     nes_k = int(getattr(cfg, "dispatch_nestle_k", 0) or 0)
     nes_cap = int(getattr(cfg, "dispatch_nestle_cap", 12) or 0)
     nes_flop_cap = float(getattr(cfg, "dispatch_nestle_flop_cap", 2e9))
@@ -72,7 +70,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
     abar = (sum(amin) / n) if n else 1.0
-    # 동적 bay: 부하 균형용 bay별 점유면적/용량 추적(least-util bay로 라우팅).
+    # 라우팅용 bay별 점유/용량 추적
     bay_area = bay_occ = None
     if dyn_bay:
         _bd = prob_info["bays"]
@@ -91,17 +89,14 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     forced_cons: set = set()
 
     def _prio(i, t):
-        # ATC (플레이북 §6): 1/((anorm^alpha) * p) * exp(-max(0, slack)/(kappa*pbar))
+        # ATC: 1/((anorm^alpha)*P) * exp(-max(0, slack)/(kappa*pbar))
         anorm = (amin[i] / abar) if abar > 0 else 1.0
         slack = D[i] - P[i] - t
         return (1.0 / ((anorm ** alpha) * max(1, P[i]))) \
             * math.exp(-max(0.0, slack) / (kappa * pbar))
 
     def _exact_gate(i, j, o, pos, xt):
-        # scan이 증명 못 하는 시간축 두 가지만 정확 검사:
-        #  (a) 내 체류 중 exit하는 상주의 반출을 내가 막는가 (역방향 차단)
-        #  (b) 내 exit(xt) 시점 잔류 상주가 내 반출을 막는가
-        # 경계(exit == xt)는 양쪽 모두에 포함 = 이중 보수 (id tie-break 미러 회피).
+        # 시간축 crane 검사(역방향+내 exit). 경계 규칙은 메모리 ogc-code-invariants 참조.
         for k in placed[j]:
             if exit_[k] <= xt and crane_blocks_resident(i, o, pos, k, coords, orient, pre):
                 return False
@@ -111,9 +106,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         return True
 
     def _try_nestle(i, j, t, xt):
-        # 마스크-비가시 합법 앵커 회수(N2). 후보 = 0<count<=K, count 오름차순
-        # (동률은 행우선 = bottom-left) 상위 cap개. 공간은 exact polygon, 크레인은
-        # 기존 _exact_gate -- 커밋 경로는 기존과 동일(hull 마스크 스탬프 유지).
+        # mask-비가시 합법 앵커 회수: 0<count<=K를 count 오름차순 cap개 정밀 재검사
         nonlocal nes_flops, nes_alive
         for o in range(len(pre.poly[i])):
             if deadline is not None and time.perf_counter() >= deadline:
@@ -160,17 +153,17 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         return False
 
     def _try_admit(i, j, t, rank=0, earlier=0, futures=None):
-        # 마감 후엔 스캔 진입 자체를 막는다(마감 전엔 항상 통과 = 비트동일).
+        # 마감 후 스캔 미진입
         if deadline is not None and time.perf_counter() >= deadline:
             return False
         xt = t + P[i]
         cap = (cfg.dispatch_cand_cap_hi if len(queue[j]) >= cfg.dispatch_queue_hi
                else cfg.dispatch_cand_cap)
-        # ΔF 페널티용 미래 표적(자기 자신은 제외 -- 제 앵커를 스스로 피하지 않게).
+        # ΔF 미래 표적 (자기 자신 제외)
         futs = None
         if futures:
             futs = [f for f in futures if f[0] != i] or None
-        any_space = False          # 진단: 어떤 방향이라도 IFP∩feasible 앵커>0 였나
+        any_space = False
         feas_anchors = cells_tried = gate_rej = 0
         for o in range(len(pre.poly[i])):
             (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
@@ -203,7 +196,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                                      feas_anchors, cells_tried, gate_rej)
                     return True
                 gate_rej += 1
-        # -- N2 hull-nestle 회수: mask-feasible 패스 전멸 시에만 (K=0 = 미진입) --
+        # hull-nestle 회수: mask 패스 전멸 시에만
         if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
             PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
                              feas_anchors, cells_tried, gate_rej)
@@ -224,7 +217,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         t = heapq.heappop(ev)
         in_ev.discard(t)
         PROBE.set_ctx(t, "exit")
-        # ① t까지의 exit 반영 (같은 tick EXIT-먼저 = 핸드오프 슬롯 사용)
+        # ① exit 반영 (같은 tick EXIT-먼저)
         for j in range(pre.n_bays):
             keep = []
             for k in placed[j]:
@@ -242,24 +235,17 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             ri += 1
         if deadline is not None and time.perf_counter() >= deadline:
             break
-        # ③ ATC 순서 admission (결정론: 동점은 낮은 id)
+        # ③ ATC 순서 admission (동점 = 낮은 id)
         PROBE.set_ctx(t, "admit")
         for j in range(pre.n_bays):
             if not queue[j]:
                 continue
-            # ΔF pre-pass: M*(큐 대형 Q개) feasible 지도 SAT를 패스당 1회 구축.
-            # 패스 중 admit로 낡아도 그대로 씀(랭킹 휴리스틱).
+            # ΔF pre-pass: M* feasible 지도 SAT를 패스당 1회 구축(패스 중 낡아도 사용)
             futures = None
             if frag_w > 0.0 and frag_alive and frag_q > 0 \
-                    and len(queue[j]) >= int(getattr(cfg, "fragdelta_queue_hi", 6)):
+                    and len(queue[j]) >= int(getattr(cfg, "fragdelta_queue_hi", 6)) \
+                    and (frag_dens <= 0.0 or _dens0(j) < frag_dens):
                 pool = list(queue[j])
-                if frag_hor > 0:
-                    # 완전 예지: t+H 내 도착 예정(미방출)인 이 bay 배정 블록도 표적.
-                    k = ri
-                    while k < n and R[order[k]] <= t + frag_hor:
-                        if bay[order[k]] == j:
-                            pool.append(order[k])
-                        k += 1
                 futures = []
                 for m in sorted(pool, key=lambda b: (-amin[b], b))[:frag_q]:
                     if deadline is not None and time.perf_counter() >= deadline:
@@ -273,8 +259,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     Km, MHm, MWm = msk.shape
                     cached = raster._scan.get(j, {}).get((m, o_m))
                     if cached is None or cached[0] != raster.ver[j]:
-                        # 신규(또는 낡은) 스캔 = 실비용. 전체 재계산 상한으로 계정
-                        # (증분이면 과대계상 = 보수적 셧오프).
+                        # 신규/낡은 스캔만 전체-재계산 상한으로 계정(보수적)
                         proxy = (float(max(raster.H[j] - MHm + 1, 0))
                                  * max(raster.W[j] - MWm + 1, 0) * MHm * MWm * Km)
                         if frag_flops + proxy > frag_cap:
@@ -299,8 +284,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     futures.append((m, MHm, MWm, Raster.sat_of(allow_m), tot))
                 if not futures:
                     futures = None
-            _earlier = 0     # 진단: 같은 tick·bay 에서 앞서 admit 된 수 (캐스케이드 깊이)
-            _fails = 0       # 마지막 admit 이후 연속 실패 수 (조기중단 카운터)
+            _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
+            _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
             for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
@@ -316,10 +301,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                         in_ev.add(x)
                 else:
                     admitted_elsewhere = False
-                    # 조건부: 지금 넣어도 지각(t+P>D)인 급한 블록만 다른 bay로 admit-now.
-                    # 여유 블록은 제 bay 대기(비혼잡 오라우팅 회귀 방지).
+                    # 지각 확정(t+P>D) 블록만 least-util 타 bay로 admit-now
                     if dyn_bay and t + P[i] > D[i]:
-                        # 다른 eligible bay 중 가장 여유있는(least-util) 순으로 시도.
                         cands = sorted((b for b in elig_bays[i] if b != j),
                                        key=lambda b: bay_occ[b] / bay_area[b])
                         for j2 in cands:
@@ -337,14 +320,11 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     if admitted_elsewhere:
                         continue
                     _fails += 1
-                    # 마지막 admit 이후 F회 연속 실패 -> 남은 큐는 다음 이벤트로 이월.
+                    # F회 연속 실패 -> 남은 큐 이월
                     if fail_stop and _fails >= fail_stop:
                         break
 
-    # -- 잔여(마감 초과 포함) -> 빈 창 강제 배치: 출력은 항상 완전한 배정 --------
-    # per-bay 스케줄 스냅숏을 1회 구축 후 append. empty_bay_entry 고정점은 구간
-    # '집합'에만 의존(순서 무관)하므로 매 호출 range(n) 재수집과 비트동일.
-    # coords 기준(placed[j] 아님): exit한 블록도 포함해야 기존 필터와 일치.
+    # -- 잔여 강제 배치 (per-bay 스케줄 스냅숏은 coords 기준 -- 규약은 ogc-code-invariants)
     _sched = [[] for _ in range(pre.n_bays)]
     _tail = [0] * pre.n_bays
     for k in coords:
@@ -355,8 +335,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     def _force(i):
         j = bay[i]
         if deadline is not None and time.perf_counter() >= deadline:
-            # 마감 후: 빈-창 탐색(bay당 O(k²)) 대신 tail-pointer(O(1)). bay tail
-            # 이후라 빈 창=feasible; 절단 해는 min-wins서 버려진다.
+            # 마감 후: 빈-창 탐색 대신 O(1) tail-pointer
             pos, o = rp.force_corner(i, j, pre)
             e = max(int(R[i]), _tail[j])
             x = e + P[i]

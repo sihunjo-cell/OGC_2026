@@ -1,11 +1,5 @@
 # Phase2/nestle.py
-"""hull-nestle 회수(N2, issue/06): 마스크(hull∘cell superset)에 비가시인 합법 앵커의
-exact polygon 판정. 계약: 후보 layer k vs 상주 layer>=k 합집합, 교차면적 > EPS_AREA
-만 충돌(변접촉 합법). 크레인은 호출자의 기존 _exact_gate, 커밋은 hull 스탬프 유지.
-
-fast 경로(판정-동치): 볼록조각(내부-서로소) 쌍면적합 == 합집합 교차면적이므로 numba로
-같은 양을 재고, EPS 근방 razor band만 shapely 재판정. numba 부재/조각 부재/
-dispatch_nestle_fast=False 시 shapely 경로(기준 구현)로 폴백."""
+"""mask-비가시 합법 앵커의 exact 공간 판정 (판정-동치 numba fast 경로, 계약 = invariants 원장)."""
 
 from __future__ import annotations
 
@@ -15,8 +9,8 @@ from shapely.ops import unary_union
 from shapely.prepared import prep
 
 EPS_AREA = 1e-9
-_EPS_LO = 5e-10    # 쌍면적합 <= 이면 확정 허용 (진짜 면적이 문턱에서 충분히 아래)
-_EPS_HI = 2e-9     # 쌍면적합 >= 이면 확정 차단; (LO, HI) razor band = shapely 재판정
+_EPS_LO = 5e-10    # <= 확정 허용
+_EPS_HI = 2e-9     # >= 확정 차단; (LO, HI) razor band = shapely 재판정
 
 try:
     from numba import njit as _njit
@@ -32,9 +26,7 @@ except Exception:                                    # pragma: no cover
 
 @_njit(cache=True, fastmath=False)
 def _clip_area(sub, ns, clip, nc):
-    """볼록 subject(CCW, ns개 꼭짓점)를 볼록 clip(CCW, nc개)으로
-    Sutherland–Hodgman 클리핑한 교차 다각형 면적. 경계 포함(dp>=0 유지)이라
-    변접촉 = 면적 0."""
+    """볼록쌍 클리핑 교차 면적 (경계 포함 -> 변접촉 = 면적 0)."""
     buf_in = np.empty((ns + nc + 8, 2), np.float64)
     buf_out = np.empty((ns + nc + 8, 2), np.float64)
     m = ns
@@ -83,8 +75,7 @@ def _clip_area(sub, ns, clip, nc):
 
 @_njit(cache=True, fastmath=False)
 def _stack_overlap_area(cv, cn, cb, dx, dy, rv, rn, rb, hi):
-    """Σ_{후보조각 a, 상주조각 b} area((조각a + (dx,dy)) ∩ 조각b).
-    bbox 서로소 쌍은 건너뜀(면적 0 확정). 누적이 hi를 넘으면 조기 반환."""
+    """후보x상주 볼록조각 쌍면적 합 (bbox 프리필터, hi 초과 조기 반환)."""
     acc = 0.0
     for a in range(cn.shape[0]):
         ax0 = cb[a, 0] + dx
@@ -112,7 +103,7 @@ def world_poly(pre, i: int, o: int, k: int, pos):
 
 
 def _pack_pieces(piece_arrays):
-    """볼록조각 리스트 -> (verts (P, Vmax, 2), counts (P,), bbox (P, 4)) 패딩 팩."""
+    """볼록조각 리스트 -> (verts, counts, bbox) 패딩 팩."""
     P = len(piece_arrays)
     V = 0
     for p in piece_arrays:
@@ -133,10 +124,7 @@ def _pack_pieces(piece_arrays):
 
 
 class ExactSpace:
-    """bay별 상주 exact 기하(layer>=k suffix 합집합)의 lazy 캐시.
-
-    token(호출자는 raster.ver[j]를 전달)이 바뀌면 그 bay의 캐시를 통째로 무효화
-    -- add/remove마다 ver가 오르므로 상주 집합과 정확히 동기화된다."""
+    """bay별 상주 exact 기하 lazy 캐시 (token = raster.ver 동기)."""
 
     def __init__(self, pre, fast: bool = True):
         self.pre = pre
@@ -146,7 +134,6 @@ class ExactSpace:
         self._fastg: dict = {}   # (j, k) -> (rv, rn, rb) | () 상주없음 | None 조각부재
         self._cnd: dict = {}     # (i, o, k) -> (cv, cn, cb) | None 조각부재
 
-    # -- 볼록조각 (pre.nfp의 캐시된 분해 재사용, CCW 정규화) --------------------
     def _pieces(self, i, o, k):
         key = (i, o, k)
         if key in self._cnd:
@@ -196,8 +183,7 @@ class ExactSpace:
         return g
 
     def _fast_ge(self, j, token, k, residents, coords, orient):
-        """상주 layer>=k 볼록조각 팩. () = 상주 조각 없음(즉시 허용),
-        None = 어느 상주 layer가 분해 불가(fast 판정 불가 -> shapely 폴백)."""
+        """상주 layer>=k 조각 팩 (()=상주 없음, None=분해 불가 -> shapely 폴백)."""
         self._sync(j, token)
         if (j, k) in self._fastg:
             return self._fastg[(j, k)]
@@ -231,8 +217,7 @@ class ExactSpace:
         return g
 
     def space_ok(self, j, token, q, o, pos, residents, coords, orient) -> bool:
-        """후보 (q, o, pos)가 상주와 exact 공간충돌 없는가 (프로브 판정-동치:
-        layer k vs 상주 layer>=k, 교차면적 > EPS_AREA 만 충돌 = 변접촉 합법)."""
+        """후보의 exact 공간충돌 없음 판정 (layer k vs 상주 >=k, 변접촉 합법)."""
         lays_q = self.pre.poly[q][o]
         for k in range(len(lays_q)):
             if self.fast:
@@ -246,10 +231,10 @@ class ExactSpace:
                             cp[0], cp[1], cp[2], float(pos[0]), float(pos[1]),
                             fr[0], fr[1], fr[2], _EPS_HI)
                         if area <= _EPS_LO:
-                            continue               # 확정 허용 (이 layer)
+                            continue
                         if area >= _EPS_HI:
-                            return False           # 확정 차단
-                        # razor band -> shapely 재판정으로 낙하
+                            return False
+                        # razor band -> shapely 재판정
             pg, ug = self._geoms_ge(j, token, k, residents, coords, orient)
             if pg is None:
                 continue

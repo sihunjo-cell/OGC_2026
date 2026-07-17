@@ -1,17 +1,15 @@
-"""Phase1.greedy -- FirstFit greedy bay 배정.
-
-블록을 EDD 순(slack↑, due↑)으로, eligible + DFF 통과 bay 중 점수
-(w2·Z2증가 + w3·선호 + 혼잡 페널티)를 최소화하는 곳에 배정. bay[i] 반환.
-"""
+"""FirstFit greedy bay 배정 (EDD 순, w2·Z2+w3·선호+혼잡 최소 bay; 마감 후 저비용 완결)."""
 
 from __future__ import annotations
+
+import time
 
 from . import common
 from .dff import dff_lb
 
 
 def _max_imbalance(load: list, u: list) -> float:
-    """max_{j1!=j2} | u_j1*load_j1 - u_j2*load_j2 |  -- floor 안 씌운 Z2 값."""
+    """floor 안 씌운 Z2 (정규화 부하 불균형 최대)."""
     m = len(load)
     if m < 2:
         return 0.0
@@ -19,7 +17,7 @@ def _max_imbalance(load: list, u: list) -> float:
     return max(wl) - min(wl)
 
 
-def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
+def firstfit_greedy(prob_info: dict, pre, cfg, deadline=None) -> list:
     blocks = prob_info["blocks"]
     bays = prob_info["bays"]
     n = len(blocks)
@@ -34,8 +32,7 @@ def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
     wh = [common.block_wh(pre, i) for i in range(n)]
     exit0 = [EST[i] + P[i] for i in range(n)]
 
-    # load(Z2 proxy)와 선호도(Z3 증가분) 항에 목적함수 가중치를 곱해,
-    # 기본 동작이 가중 목적함수를 greedy하게 최소화하도록 한다.
+    # 점수 항에 목적함수 가중치 반영
     weights = prob_info.get("weights", {})
     w2 = weights.get("w2", 1.0)
     w3 = weights.get("w3", 1.0)
@@ -69,6 +66,16 @@ def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
     assigned = [[] for _ in range(m)]        # bay별 배정된 블록 id
 
     for i in order:
+        # 마감 후 저비용 완결 (선호 최대 eligible bay -- 근거 = P6 원장)
+        if deadline is not None and time.perf_counter() >= deadline:
+            elig = [j for j in range(m) if common.eligible(pre, i, j)]
+            j_star = (max(elig, key=lambda j: (S[i][j], -j)) if elig
+                      else max(range(m), key=lambda j: bays[j]["width"] * bays[j]["height"]))
+            bay[i] = j_star
+            load[j_star] += L[i]
+            assigned[j_star].append(i)
+            prof[j_star].append((EST[i], exit0[i], areas[i]))
+            continue
         cand = []
         for j in range(m):
             if not common.eligible(pre, i, j):
@@ -76,16 +83,16 @@ def firstfit_greedy(prob_info: dict, pre, cfg) -> list:
             co = [k for k in assigned[j] if common.time_overlap(EST, exit0, i, k)]
             items = [wh[k] for k in co] + [wh[i]]
             if dff_lb(items, bays[j]["width"], bays[j]["height"], cfg.pq_step) > 1.0 + 1e-9:
-                continue                      # DFF 필요조건 위반 -> 후보 제외
+                continue                      # DFF 필요조건 위반
             cand.append(j)
 
         if not cand:
-            # 최후 수단: eligible한 것 중 가장 큰 bay (없으면 bay 0 -- 비정상 입력)
+            # 최후 수단: eligible 중 최대 bay
             elig = [j for j in range(m) if common.eligible(pre, i, j)]
             cand = [max(elig, key=lambda j: bays[j]["width"] * bays[j]["height"])] if elig else [0]
 
         def _score(j):
-            # 정확한 myopic 목적함수 증가분: 블록 i를 bay j에 넣고 Z2 재계산
+            # myopic 목적함수 증가분
             trial = list(load)
             trial[j] += L[i]
             z2_after = _max_imbalance(trial, u)

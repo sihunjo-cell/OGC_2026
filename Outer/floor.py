@@ -1,9 +1,4 @@
-"""Outer.floor -- last-resort feasible solution (never raises, always certified).
-
-Per-bay tail-pointer placement: each block goes to an eligible bay (preference
-desc, shortest tail tiebreak) at its IFP bottom-left corner in a window where
-that bay is otherwise empty (entry = max(release, bay tail)). Empty-window +
-IFP corner is structurally checker-feasible."""
+"""최후의 feasible 해: 선호순 bay + IFP 코너 + 빈 창 tail-pointer (구조적 체커-feasible)."""
 
 from __future__ import annotations
 
@@ -18,7 +13,7 @@ LAST_FLOOR = {"sol": None}
 def _pick_bay(pre, i, tails, prefs):
     cands = [j for j in range(pre.n_bays) if eligible(pre, i, j)]
     if not cands:
-        cands = list(range(pre.n_bays))          # pathological: no eligible bay
+        cands = list(range(pre.n_bays))          # 비정상 입력 방어
     pf = prefs[i] if i < len(prefs) else []
     cands.sort(key=lambda j: (-(pf[j] if j < len(pf) else 0), tails[j], j))
     return cands[0]
@@ -29,7 +24,7 @@ def _corner(pre, i, j):
         (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
         if x_lo <= x_hi and y_lo <= y_hi:
             return o, (x_lo, y_lo)
-    # No orientation fits j: fall back to first orientation's raw corner.
+    # 폴백: orientation 0 코너
     (x_lo, _), (y_lo, _) = pre.IFP[i][0][j]
     return 0, (x_lo, y_lo)
 

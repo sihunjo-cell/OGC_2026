@@ -1,8 +1,4 @@
-"""
-Outer.acceptance -- 담금질(SA) 수용 판정.
-시작 온도는 w_pct만큼 나쁜 해를 확률 0.5로 수용하도록 유도:
-T_start = -(w_pct * f0) / ln(0.5). Metropolis 규칙, 기하 냉각.
-"""
+"""SA 수용 판정 (T_start = -(w_pct*f0)/ln(0.5), Metropolis + 기하 냉각)."""
 
 from __future__ import annotations
 

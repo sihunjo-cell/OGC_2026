@@ -1,4 +1,4 @@
-"""Phase 2 정확 충돌 게이트 (dispatch 안전망 repair가 쓰는 쌍별 기하 판정)."""
+"""쌍별 정확 충돌 판정 (NFP 기반)."""
 
 from __future__ import annotations
 
