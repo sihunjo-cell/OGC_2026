@@ -1,11 +1,4 @@
-"""
-Outer.repair -- 제거된 블록을 빠른 삽입 비용으로 재배정(Phase 2 없이):
-    cost(i, j) = w2 * Z2_after(i->j) + w3 * (Smax_i - S_ij) + crowd(i, j)
-crowd(i, j)는 혼잡을 피하도록 유도하는 Z1 인지 소프트 면적-용량 페널티
-(0이면 Z1 무시 기준선).
-  greedy  : 삽입 비용이 가장 작은 블록을 삽입.
-  regret_k: k개 최선 베이에 대한 후회가 가장 큰 블록을 삽입.
-"""
+"""제거 블록 재배정: cost = w2·Z2 + w3·선호 + 혼잡 (greedy / regret_k)."""
 
 from __future__ import annotations
 
@@ -20,7 +13,7 @@ def _eligible_bays(pre, i, m):
 
 
 def _areas(pre):
-    """PRE 객체에 캐싱한 풋프린트 면적(한 번만 계산)."""
+    """풋프린트 면적 (PRE에 1회 캐시)."""
     a = getattr(pre, "_crowd_areas", None)
     if a is None:
         a = [footprint_area(pre, i) for i in range(pre.n_blocks)]
@@ -41,7 +34,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
     w = prob_info.get("weights", {})
     w1, w2, w3 = w.get("w1", 1.0), w.get("w2", 1.0), w.get("w3", 1.0)
     areas = _areas(pre)
-    # 혼잡 페널티는 매 repair에 통합(w1 스케일, 별도 연산자면 저반복서 희석)
+    # 혼잡 페널티 (w1 스케일)
     cw = cfg.crowd_weight
     eta = cfg.crowd_eta
     op_type = "regret_k" if "regret" in op else "greedy"
@@ -50,8 +43,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
     loads = loads_from_bay(bay, L, m)
     remaining = set(D)
 
-    # 현재 배정된(유지+삽입) 블록의 베이별 시간-면적 프로파일:
-    # prof[j] = (entry, exit, area) 목록, entry = EST_k, exit = EST_k + P_k.
+    # bay별 시간-면적 프로파일 prof[j] = [(entry, exit, area)]
     prof = [[] for _ in range(m)]
     for k, j in enumerate(bay):
         if j is not None:
@@ -62,8 +54,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
             return 0.0
         WH = bays[j]["width"] * bays[j]["height"]
         ei, xi, ai = EST[i], EST[i] + P[i], areas[i]
-        # i가 머무는 동안의 최대 동시 점유 면적: i의 진입시각과 i의 윈도 안에
-        # 드는 다른 블록의 진입시각만 확인(혼잡은 그 지점에서만 바뀜)
+        # peak = 진입시각 지점만 확인 (혼잡은 그때만 변함)
         times = [ei] + [a for (a, e, ar) in prof[j] if ei <= a < xi]
         peak = 0.0
         for t in times:
@@ -76,7 +67,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
         over = peak - eta * WH
         return (cw * w1 * over / WH) if over > 0.0 else 0.0
 
-    # 노이즈 진폭 = 실제 삽입비용 격차 스케일
+    # 노이즈 진폭 스케일 (근거 = invariants 원장)
     noise_amp = cfg.repair_noise * max(w3 * 100.0, w2 * 10.0, 1.0)
 
     def sorted_costs(i):
@@ -92,8 +83,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
         return out
 
     while remaining:
-        # 마감 후엔 멈춘다(잔여는 아래 fallback으로 완결; alns가 repair 직후 이 결과를
-        # 버리므로 마감 전 결과는 불변).
+        # 마감 후 중단 (잔여는 fallback 완결)
         if deadline is not None and time.perf_counter() >= deadline:
             break
         best = {i: sorted_costs(i) for i in remaining}
@@ -116,7 +106,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
         prof[j_star].append((EST[i_star], EST[i_star] + P[i_star], areas[i_star]))
         remaining.discard(i_star)
 
-    # 남은 블록(적격 베이 없음 -- 비정상): 가장 큰 베이에 넣음
+    # 잔여 fallback: 최대 bay
     for i in remaining:
         elig = _eligible_bays(pre, i, m) or [0]
         bay[i] = max(elig, key=lambda j: bays[j]["width"] * bays[j]["height"])

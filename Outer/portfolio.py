@@ -24,33 +24,21 @@ _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
 def default_portfolio() -> list:
-    """이벤트 구동 dispatch 4-워커 포트폴리오: κ3/F8·κ1/F24 각 dyn-on/off 페어, min-wins.
-    - dyn-on 페어(κ3·κ1): 동적 bay 재라우팅으로 혼잡 문제 담당(κ-다양성). 정체 재시작
-      (κ3→stall8, κ1→stall16)으로 장예산에서 κ-지터 구성의 새 basin 탐색(단예산선 비활성).
-    - dyn-off 페어(κ3·κ1): 재라우팅(선호bay 이탈=Z3 손해)이 해로운 고-w3 유형을 flooring.
-    configs[0](κ3 dyn-on)이 부모 warm 빌드로 첫 인증해 + 단일워커 fallback을 담당.
-    워커 서브프로세스는 BLAS 1스레드 핀(평가서버 4코어 cpulimit 스로틀 방지)."""
-    # ΔF 재평가용 훅(issue/05): OGC_FRAGDELTA="w,queue_hi,horizon" 시 dyn-on 2워커 적용.
-    fd = {}
-    _fd_env = os.environ.get("OGC_FRAGDELTA", "")
-    if _fd_env:
-        try:
-            _w, _q, _h = (float(x) for x in _fd_env.split(","))
-            fd = dict(dispatch_fragdelta=_w, fragdelta_queue_hi=int(_q),
-                      fragdelta_horizon=int(_h))
-        except Exception:
-            fd = {}
-    # hull-nestle k32/cap12 = dyn-on 기본(2026-07-16 승격, 게이트①~④ = issue/06).
-    nes = dict(dispatch_nestle_k=32, dispatch_nestle_cap=12)
+    """4-워커 min-wins 포트폴리오: {κ3, κ1} x {dyn-on, dyn-off(floor)} -- 배선 근거는 메모리 원장."""
+    # hull-nestle: dyn-on 기본 (k32; cap/flop 재보정 2026-07-17 -- 근거 = wall-anatomy 원장)
+    nes = dict(dispatch_nestle_k=32, dispatch_nestle_cap=32,
+               dispatch_nestle_flop_cap=2e10)
+    # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
+    fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
     return [
         OuterConfig(xi=0.3, seed=1, restart_stall=8,
-                    phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, 재시작8)
+                    phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, ΔF)
         OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
-                                                        dispatch_dynamic_bay=False)),                  # κ3 dyn-off (32 floor)
+                                                        dispatch_dynamic_bay=False)),                  # κ3 dyn-off (floor)
         OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24, **fd, **nes)),  # κ1 dyn-on (혼잡 최강, 재시작16)
+                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24, **nes)),        # κ1 dyn-on
         OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                        dispatch_dynamic_bay=False)),                  # κ1 dyn-off (37/25 floor)
+                                                        dispatch_dynamic_bay=False)),                  # κ1 dyn-off (floor)
     ]
 
 
@@ -58,7 +46,7 @@ def _warm_cache(prob_info: dict, pre, cfg: OuterConfig, deadline=None):
     from Phase1 import BuildBayAssignment
     from .realize import realize
 
-    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)
+    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1, deadline=deadline)
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     return (s.objective, s.solution) if s.feasible else (float("inf"), None)
 
@@ -98,7 +86,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     warm_obj, warm_sol, pre = float("inf"), None, None
     try:
         pre = preprocess(prob_info)
-        # warm 빌드 상한 max(30s, 0.35T): train 무발동, 대형서만 워커 예산 보호.
+        # warm 빌드 상한 max(30s, 0.35T)
         warm_deadline = deadline
         if deadline is not None:
             cap = max(30.0, 0.35 * float(time_limit))
@@ -107,8 +95,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     except Exception:
         pre = None
 
-    # 절대 반환 보장: 어느 경로에서 warm/워커가 다 실패해도 None 대신 floor를 낸다.
-    # floor는 min-비교에서 절대 못 이기므로 정상 경로 결과는 불변.
+    # 절대 반환 보장: 전 실패 시 None 대신 floor (min에서 못 이김 = 정상 경로 불변)
     floor_sol = None
     if pre is not None:
         try:
@@ -172,7 +159,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
     pre_path = os.path.join(tmpdir, "pre.pkl")
     with open(prob_path, "w", encoding="utf-8") as f:
         json.dump(prob_info, f)
-    # 마스크 캐시(수십 MB)는 피클 제외 -- 워커가 자체 재빌드(전송비용 리스크 회피).
+    # 마스크 캐시는 피클 제외 (워커 자체 재빌드)
     try:
         delattr(pre, "_raster_mask_cache")
     except AttributeError:
@@ -203,7 +190,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                 "" if deadline is None else str(deadline),
                 "" if deadline_s is None else str(deadline_s),
             ]
-            # 워커 BLAS 1스레드 핀(4코어 cpulimit 스로틀 방지, 결과 무관).
+            # 워커 BLAS 1스레드 핀
             p = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                  env={**os.environ,
                                       "OMP_NUM_THREADS": "1", "MKL_NUM_THREADS": "1",
@@ -236,7 +223,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
             if remaining > 0:
                 p.wait(timeout=remaining)
             else:
-                p.kill()               # wrapup 초과: 워커당 +1s 낭비 없이 즉시 정리
+                p.kill()               # wrapup 초과 즉시 정리
         except Exception:
             try:
                 p.kill()

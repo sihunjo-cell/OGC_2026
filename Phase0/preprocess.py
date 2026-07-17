@@ -1,4 +1,4 @@
-"""Phase0.preprocess -- 오케스트레이터: 0.1 상수 + 0.2 지오메트리를 PRE 번들로 묶음."""
+"""상수 + 기하 테이블을 PRE 번들로 묶는 오케스트레이터."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .geometry_tables import precompute_geometry, NFPCache
 
 @dataclass
 class PRE:
-    """Phase 0 전체 출력(0.1 + 0.2). 접근 편하게 펼쳐 놓음."""
+    """Phase 0 전체 출력 번들."""
 
     # -- 0.1 상수 -------------------------------------------------------------
     u: list          # u[j]     bay 면적 가중치 = Abar / (W_j * H_j)
@@ -46,7 +46,5 @@ class PRE:
 
 def preprocess(prob_info: dict, dp_tol: Optional[float] = None,
                geom_mode: Optional[str] = None) -> PRE:
-    """0.1 + 0.2를 돌려서 Phase 1용 PRE 번들 반환. geom_mode로 NFP 백엔드 오버라이드
-    (기본값 config.GEOM_MODE / OGC_GEOM).
-    """
+    """PRE 번들 생성 (geom_mode = NFP 백엔드 오버라이드)."""
     return PRE.build(prob_info, dp_tol=dp_tol, geom_mode=geom_mode)

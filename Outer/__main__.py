@@ -1,11 +1,4 @@
-"""
-Outer 스모크 테스트 / CLI.
-
-    python -m Outer <instance> [--time S] [--xi F] [--seed N]
-
-주어진 벽시계 시간 동안 Phase 0 -> ALNS(내부적으로 Phase 1 + Phase 2 사용)를 돌린 뒤,
-s_best를 utils로 검증하고 목적함수 궤적을 출력.
-"""
+"""Outer 스모크 CLI: python -m Outer <instance> [--time S] [--xi F] [--seed N]."""
 
 from __future__ import annotations
 

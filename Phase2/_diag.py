@@ -1,11 +1,5 @@
 # Phase2/_diag.py
-"""헛측량(wasted re-scan) 원인 계측 프로브. OGC_DIAG=1 일 때만 활성(그 외엔 무부하).
-
-raster.scan / raster._stamp / dispatch._try_admit 에 훅을 걸어 '스캔이 재계산됐는데
-블록은 안 들어간' 사건을 두 축으로 분해한다.
-  축1 재계산 원인: cold(첫 스캔) / intra_add / intra_exit(같은 tick) / inter_tick.
-  축2 이벤트 결과: admitted(헛측량 아님) / no_space(앵커 0) / gate_fail(게이트 탈락).
-cost = einsum FLOP 프록시 = Σ_{활성층 k} R*C*MH*MW. 비용가중 귀속에 사용."""
+"""계측 프로브 (OGC_DIAG=1일 때만 활성, 그 외 무부하) -- scan/stamp/admission 훅."""
 
 from __future__ import annotations
 
@@ -35,9 +29,7 @@ class _Probe:
             "admit_tick": None, "cells_tried": 0, "gate_rej": 0})
         # 원인별 미스 집계 (비용가중)
         self.cause = defaultdict(lambda: {"calls": 0, "cost": 0.0})
-        # 원인 × 결과 교차 (헛측량 귀속의 핵심 표)
-        #   결과는 그 스캔을 낸 블록의 '이번 이벤트' 최종결과로 사후 조인 불가하므로,
-        #   스캔 시점엔 원인만 알고 결과는 attempt에서 따로 집계 -> finalize에서 블록조인.
+        # 원인 x 결과 교차 (finalize에서 블록조인)
         self.miss_by_cause_tickblk = defaultdict(lambda: {"calls": 0, "cost": 0.0})
         # (tick, block) -> 원인별 미스비용  : attempt 결과와 조인해 헛측량 원인 귀속
         self.staleness = defaultdict(int)   # (v1 - v0) 히스토그램
@@ -179,8 +171,7 @@ class _Probe:
     def finalize(self, prob=None, meta=None):
         # 블록별 최종 결과 (construct 내에서 admit 됐나)
         admitted_blk = {i for i, a in self.blk_att.items() if a["admitted"] > 0}
-        # 헛측량 원인귀속: (tick,block)의 미스비용을 그 블록의 '이번 tick 결과'로 태깅.
-        #   결과는 attempt raw 에서 (tick,block)->outcome 로 역인덱스.
+        # (tick,block) 미스비용을 그 tick 결과로 태깅
         outcome_at = {}
         for a in self.attempts:
             outcome_at[(a["tick"], a["blk"])] = a["outcome"]

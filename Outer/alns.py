@@ -19,15 +19,11 @@ from .repair import repair
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
          max_iters=None, deadline=None, deadline_s=None, t0=None, on_best=None):
-    """Run ALNS until budget, deadline, or max_iters is reached.
-
-    t0: anytime 계측의 시각 원점(perf_counter 값). 미지정 시 alns 시작 시각.
-    stats["best_events"]/["iter_t"]는 진단용 추가 데이터로, 호출자가 무시하면
-    기존 동작과 완전히 동일하다(worker/portfolio는 stats를 버림)."""
+    """bay 배정 공간 ALNS (budget/deadline/max_iters까지; stats는 진단용)."""
     cfg = cfg or OuterConfig()
     rng = Random(cfg.seed)
 
-    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1)
+    p1 = BuildBayAssignment(prob_info, pre, cfg.phase1, deadline=deadline)
     start = time.perf_counter()
     if t0 is None:
         t0 = start
@@ -36,7 +32,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
     s_best = s
 
-    # 증분 결과 방출(원자 기록용): 전역 best 갱신 시에만, ≥3s 스로틀.
+    # 증분 best 방출 (>=3s 스로틀)
     _last_emit = [0.0]
 
     def _emit_best(sol):
@@ -66,11 +62,10 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "elapsed_s": 0.0,
         "deadline_s": deadline_s,
         "stopped_by_deadline": False,
-        # anytime 곡선: [상대시각, incumbent obj], 첫 원소 = 초기 realize.
         "best_events": [[time.perf_counter() - t0, s.objective]],
-        "iter_t": [],   # 반복 완료 시각(t0 기준). diff -> 반복 1회 비용 분포.
+        "iter_t": [],
     }
-    # 정체 재시작(restart_stall>0): κ-지터 구성으로 새 basin 탐색(s_best는 유지).
+    # 정체 재시작 (κ-지터, s_best 유지)
     restart_stall = int(getattr(cfg, "restart_stall", 0) or 0)
     since_best = 0
     base_kappa = float(cfg.phase2.atc_kappa) if cfg.phase2 is not None else 2.0
@@ -116,8 +111,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         else:
             since_best += 1
 
-        # 정체 재시작: κ-지터 구성으로 새 basin (s_best 유지, 온도 리셋).
-        # 마감을 이미 넘겼으면 두 번째 full realize를 시작하지 않는다(마감 후 전용).
+        # 정체 재시작 (마감 후 미진입)
         if (restart_stall and since_best >= restart_stall and cfg.phase2 is not None
                 and not (deadline is not None and time.perf_counter() >= deadline)):
             jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))

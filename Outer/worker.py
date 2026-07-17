@@ -36,8 +36,7 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
     result = {"obj": float("inf"), "solution": None}
 
     def _atomic_write(payload):
-        # tmp + os.replace: 부모는 항상 완전한 파일만 본다. best 갱신마다 호출하므로
-        # 워커가 중간에 죽어도 마지막 best가 out_path에 남는다.
+        # tmp + os.replace 원자 기록 (사망 시에도 마지막 best 보존)
         d = os.path.dirname(out_path) or "."
         fd, tmp = tempfile.mkstemp(dir=d, prefix=".w", suffix=".json")
         try:
@@ -65,7 +64,7 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
         alns_budget = None
         if deadline is None:
             alns_budget = max(1.0, wall_budget - (time.perf_counter() - t0) - _WRITE_MARGIN)
-        # 부모의 절대 deadline을 자기 시계 예산으로도 상한(시계 원점 가정 방어).
+        # 부모 deadline을 자기 시계 예산으로 재상한
         deadline_eff = deadline
         if deadline is not None:
             deadline_eff = min(deadline,

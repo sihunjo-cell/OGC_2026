@@ -16,18 +16,16 @@ class Phase2Config:
     scan_incremental: bool = True   # 스캔 공간 국소 무효화 (False = 검증/계측용)
     dispatch_admit_fail_stop: int = 0   # 마지막 admit 후 F회 연속실패 시 패스 종료 (0=끔)
     mask_cache_share: bool = True   # 마스크 캐시 pre 공유 (설계도 간 재사용, 비트동일)
-    # 동적 bay: 배정 bay에 못 들고 지각확정(t+P>D)인 블록만 least-util bay로 admit-now.
-    # False = 고정-bay (포트폴리오 dyn-off floor 워커용).
+    # 동적 bay: 지각확정 블록만 least-util 타 bay로 admit-now (False = 고정-bay floor용)
     dispatch_dynamic_bay: bool = True
-    # ΔF 파편화 항 (FGD, issue/05): 앵커 점수에 "큐 대형 M*의 앵커를 죽이는 비율"
-    # 페널티. 0 = 끔(비트동일). flag-off 보관(예산-민감, T>=300 재평가 조건).
+    # ΔF 파편화 항: 앵커 점수에 미래-앵커 살해 페널티 (0 = 끔; 배선 근거 = fgd 원장)
     dispatch_fragdelta: float = 0.0
     fragdelta_queue_hi: int = 6     # bay 큐 길이 임계 (이상일 때만 활성)
     fragdelta_q: int = 4            # M* 크기
-    fragdelta_horizon: int = 0      # M*에 R<=t+H 미도착 대형 포함 (0=큐만)
     fragdelta_flop_cap: float = 2e9  # 디코드당 FLOP 상한 -- 초과 시 잔여 비활성
-    # hull-nestle 회수 (N2, issue/06): mask 패스 전멸 시 0<count<=K 앵커를 count
-    # 오름차순 cap개 exact 공간검사 + 기존 크레인 게이트로 admit. 0 = 끔(비트동일).
+    # ΔF 형성기 게이트: bay 밀도 >= 값이면 항 비활성 (0 = 게이트 없음)
+    fragdelta_dens_hi: float = 0.0
+    # hull-nestle 회수: mask 전멸 시 count<=K 앵커 cap개 정밀 재검사 (0 = 끔)
     dispatch_nestle_k: int = 0
     dispatch_nestle_cap: int = 12
     dispatch_nestle_fast: bool = True    # 판정-동치 numba 가속 (False = 순수 shapely)

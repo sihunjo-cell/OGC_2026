@@ -1,10 +1,4 @@
-"""
-Outer.destroy -- 배정에서 q개 블록 제거(AOS가 연산자 가중치 학습):
-  random  : q개를 균등 무작위로.
-  worst   : 목적함수 기여가 큰 순, 상위 편향.
-  related : r_related 거리 기반 Shaw 제거(작을수록 유사).
-제거 자리를 None으로 둔 partial bay와 제거 집합 D를 반환.
-"""
+"""destroy 연산자 3종 (random / worst / related-Shaw) -> (partial bay, 제거 집합)."""
 
 from __future__ import annotations
 
@@ -38,7 +32,7 @@ def r_related(i, j, s, cfg, pre, norm):
 
 
 def _pick_biased(sorted_ids, y, p):
-    """sorted_ids[floor(y^p * len)] 선택 -- y in [0,1), p가 클수록 앞쪽 편향."""
+    """y^p 편향 선택 (p 클수록 앞쪽)."""
     idx = int((y ** p) * len(sorted_ids))
     if idx >= len(sorted_ids):
         idx = len(sorted_ids) - 1
@@ -88,8 +82,7 @@ DESTROY_OPS = {
 
 
 def destroy(s, op: str, cfg, prob_info: dict, pre, rng):
-    """(partial_bay, D) 반환: 제거 블록을 None으로 바꾼 s.bay 복사본과
-    제거된 블록 id 집합 D."""
+    """(partial_bay, D) 반환."""
     n = len(s.bay)
     q = max(1, min(n, round(cfg.xi * n)))
     D = DESTROY_OPS[op](s, q, cfg, prob_info, pre, rng)

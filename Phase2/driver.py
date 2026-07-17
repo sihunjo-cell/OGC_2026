@@ -1,7 +1,4 @@
-"""Phase2.driver -- PlaceAndCrane: dispatch 배치 후 크레인 인증 + repair 파이프라인.
-
-dispatch_construct(배치) -> 크레인 인증(공식 utils) -> Phase A(충돌 블록 하루씩 미룸)
--> Phase B(부분점유 슬롯 재시도 후 빈 bay force_place). 출력은 항상 완전한 feasible."""
+"""PlaceAndCrane: 배치 -> 공식 크레인 인증 -> repair(A: 하루 미룸, B: 슬롯 재시도/강제)."""
 
 from __future__ import annotations
 
@@ -16,8 +13,7 @@ from . import repair as rp
 
 
 def build_solution(coords, orient, entry, exit_, bay, block_ids) -> dict:
-    """{"operations": {...}} dict 조립. 같은 날 안에서는 EXIT를 ENTRY보다 먼저
-    (정렬 키 0 = EXIT, 1 = ENTRY), block_id를 2차 키로."""
+    """제출 dict 조립 (같은 날 EXIT-먼저 정렬 = load-bearing)."""
     buckets = {}
     for i in block_ids:
         buckets.setdefault(int(exit_[i]), []).append((0, "EXIT", i, bay[i], None, None, None))
@@ -43,7 +39,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
     cfg = cfg or Phase2Config()
 
     def _past():
-        # 마감 초과 시 이후 재시도를 빈 bay 강제로 스킵(단일 디코드 오버슛 상한).
+        # 마감 초과 판정
         return deadline is not None and time.perf_counter() >= deadline
 
     blocks = prob_info["blocks"]
@@ -64,9 +60,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         return [(entry[k], exit_[k]) for k in bay_blocks[j] if k in coords and k != exclude]
 
     def _earliest_slot(i, j, placed_here):
-        """이미 bay에 있는 블록들 사이에서, 블록 i가 IFP 좌하단 코너에 들어맞는
-        (공간상 충돌 없고 entry/exit 모두 크레인이 트인) 가장 이른 later entry.
-        빈 window로 밀지 않고 지연을 최소화한다. 반환 (pos, o, entry, exit) 또는 None."""
+        """IFP 코너로 들어맞는 가장 이른 슬롯 (없으면 None) -- 빈 창으로 안 밀고 구조."""
         r, p = R[i], P[i]
         n_o = len(pre.poly[i])
         corners = []
@@ -92,7 +86,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
                 return pos, o, t, xt
         return None
 
-    # ---- 배치: 이벤트 구동 ATC 디스패처 (Phase2.dispatch) --------------------
+    # ---- 배치 ----
     coords, orient, d_entry, d_exit, forced_cons, d_bay = dispatch_construct(
         prob_info, p1_out, pre, cfg, deadline=deadline)
     entry[:] = d_entry
@@ -103,14 +97,12 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
     for i in range(n):
         bay_blocks[bay[i]].append(i)
 
-    # ---- 크레인 인증 + repair 루프 ----------------------------------
-    # Phase A: 값싼 점진 패스 -- 충돌 블록을 전부 하루씩 미뤄서(Z1-marginal 순서)
-    # 가벼운 크레인 sweep을 싸게 해소. Phase B: 그래도 충돌하면 빈 bay로 강제.
+    # ---- 크레인 인증 + repair (A: 하루 미룸 / B: 슬롯 재시도 후 강제) ----
     forced = set()
     feasible, conflicts, stage = False, [], 0
     sol = None
     for _ in range(cfg.max_repair_passes):
-        if _past():                # 마감 후엔 재인증 패스(공식체커 O(n^2/bay))를 멈춘다.
+        if _past():                # 마감 후 재인증 중단
             break
         sol = build_solution(coords, orient, entry, exit_, bay, range(n))
         feasible, conflicts, stage = crane_feasibility(prob_info, sol)
@@ -119,8 +111,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         for v in sorted(conflicts, key=lambda k: (rp.z1_marginal(k, exit_, D), k)):
             rp.shift_later(v, entry, exit_, P, stage)
 
-    # Phase B: force_place(빈 창) 전 부분점유 슬롯 재시도. 실패/재충돌 시 force_place로
-    # 승격(빈 창은 충돌 불가 = 종착 보장). retried는 패스 간 유지, 마지막 4패스는 순수 강제.
+    # Phase B: 슬롯 재시도 -> 실패/재충돌 시 force_place 승격 (빈 창 = 종착 보장)
     retried: set = set()
     rescue_budget = cfg.force_retry_budget
     slot_rescued = retry_reverted = 0
@@ -129,7 +120,6 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         guard += 1
         allow_rescue = (cfg.force_retry_phase_b and rescue_budget > 0
                         and guard <= guard_max - 4 and not _past())
-        # z1_marginal 오름차순(slack 블록 먼저 -> 크레인 연쇄 충돌 적음). OFF면 원시 순서.
         order = (sorted(conflicts, key=lambda k: (rp.z1_marginal(k, exit_, D), k))
                  if cfg.force_retry_phase_b else conflicts)
         for v in order:
@@ -147,7 +137,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
                 slot_rescued += 1
             else:
                 if v in retried:
-                    retry_reverted += 1     # 구조됐다 재충돌 -> 강제로 승격
+                    retry_reverted += 1
                 pos, o, e, x = rp.force_place(v, j, _schedule_excluding(j, v), pre, R, P)
                 forced.add(v)
             coords[v], orient[v] = pos, o
@@ -155,7 +145,7 @@ def PlaceAndCrane(prob_info: dict, p1_out, pre, cfg: Phase2Config = None,
         sol = build_solution(coords, orient, entry, exit_, bay, range(n))
         feasible, conflicts, stage = crane_feasibility(prob_info, sol)
 
-    if sol is None:                # 마감이 진입 시점에 이미 지남 -> 반환용 조립(미인증).
+    if sol is None:                # 마감 후 진입 -> 미인증 조립
         sol = build_solution(coords, orient, entry, exit_, bay, range(n))
 
     Z1 = sum(max(0, exit_[i] - D[i]) for i in range(n)) if feasible else None
