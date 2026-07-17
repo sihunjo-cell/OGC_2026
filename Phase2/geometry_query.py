@@ -1,8 +1,4 @@
-"""Phase2.geometry_query -- 탐색 hot loop용 순수 파이썬 geometry 쿼리.
-
-Phase 0이 미리 계산해 둔 순수 꼭짓점 ring/테이블(PRE.nfp, PRE.poly, PRE.bbox)을
-shapely 없이 사용. 좌표 변환, AABB/point-in-ring 겹침, NFP reflection +
-relative-NFP 캐시 조회를 다룬다."""
+"""hot loop용 순수 파이썬 geometry 쿼리 (NFP 조회/reflect memo, 규약 = invariants 원장)."""
 
 from __future__ import annotations
 
@@ -12,8 +8,7 @@ import weakref
 
 import numpy as _np
 
-# numba 가속 (선택). 아래 각 njit 커널은 옆의 순수 파이썬 함수를 bit-identical
-# (수치 동일)하게 옮긴 것. numba 없으면 순수 파이썬 경로로 폴백.
+# numba 가속 (선택; njit 커널은 py 경로와 수치 동일, 부재 시 폴백)
 try:
     from numba import njit as _njit
     _HAVE_NUMBA = True
@@ -32,7 +27,7 @@ _EPS = 1e-9
 # -----------------------------------------------------------------------------
 
 def world_bbox(pre, i: int, o: int, pos: tuple) -> tuple:
-    """pos에 놓인 블록 i(orientation o)의 bounding box, bay 좌표계."""
+    """bay 좌표계 bounding box."""
     x, y = pos
     x0, y0, x1, y1 = pre.bbox[i][o]
     return (x0 + x, y0 + y, x1 + x, y1 + y)
@@ -47,13 +42,12 @@ def num_layers(pre, i: int, o: int) -> int:
 # -----------------------------------------------------------------------------
 
 def bbox_overlap(a: tuple, b: tuple) -> bool:
-    """엄격 AABB 겹침 (변/코너 공유는 겹침 아님), utils._bb_overlap과 동일.
-    a, b = (min_x, min_y, max_x, max_y)."""
+    """엄격 AABB 겹침 (변/코너 공유 = 아님; 공식 utils와 동일 판정)."""
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
 
 
 def _in_ring_py(x, y, ring):
-    """꼭짓점 리스트에 대한 ray-cast point-in-ring (순수 파이썬 폴백)."""
+    """ray-cast point-in-ring (py 폴백)."""
     n = len(ring)
     inside = False
     j = n - 1
@@ -68,8 +62,7 @@ def _in_ring_py(x, y, ring):
 
 @_njit(cache=True)
 def _in_ring_arr(x, y, ring):             # pragma: no cover (njit)
-    """(n,2) float64 ring에 대한 njit ray-cast -- _in_ring_py를 bit-identical
-    (수치 동일)하게 옮긴 것."""
+    """njit ray-cast (_in_ring_py와 수치 동일)."""
     n = ring.shape[0]
     inside = False
     j = n - 1
@@ -83,7 +76,7 @@ def _in_ring_arr(x, y, ring):             # pragma: no cover (njit)
 
 
 def _ext_arr(r):
-    """ring r의 exterior float64 배열을 지연 생성해 붙이고 반환."""
+    """exterior 배열 lazy 캐시."""
     a = r.get("_ext_arr")
     if a is None:
         a = r["_ext_arr"] = _np.asarray(r["ext"], _np.float64)
@@ -98,8 +91,7 @@ def _hole_arrs(r):
 
 
 def point_in_rings(px: float, py: float, rings: list) -> bool:
-    """(px, py)가 ring 집합 내부에 엄격히 있으면 True (어떤 exterior 안이면서
-    그 hole 어디에도 안 들어감). 변 위의 점은 바깥으로 침 (변 공유는 충돌 아님)."""
+    """점이 ring 집합 내부에 엄격히 있는가 (변 위 = 바깥)."""
     if _HAVE_NUMBA:
         for r in rings:
             if _in_ring_arr(px, py, _ext_arr(r)):
@@ -113,7 +105,7 @@ def point_in_rings(px: float, py: float, rings: list) -> bool:
 
 
 def reflect_rings(rings: list) -> list:
-    """ring 집합을 원점 대칭 (NFP(a,b) -> NFP(b,a) = -NFP(a,b))."""
+    """원점 대칭 (NFP(a,b) -> NFP(b,a))."""
     out = []
     for r in rings:
         r2 = {
@@ -127,11 +119,7 @@ def reflect_rings(rings: list) -> list:
     return out
 
 
-# reflect된 NFP ring의 run 단위 memo (`moving < fixed` 분기). reflect된 ring은
-# 위치 무관이라 캐시하면 후보 위치마다 다시 reflect 안 해도 된다. memo가 돌려주는
-# 것은 공유되는 read-only 객체이니 모든 호출자는 읽기 전용으로만 쓴다. NFPCache를
-# 키로 WeakKeyDictionary에 담아 worker PRE로 pickle되지 않고 PRE와 함께 해제된다.
-# `fixed < moving` 분기는 이미 NFPCache._cache를 직접 친다.
+# reflect NFP memo (read-only 공유, WeakKey로 PRE 수명 동조 -- 규약 = invariants 원장)
 _REL_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 _REL_CAP = int(os.environ.get("OGC_NFP_CAP", "250000"))
 
@@ -144,20 +132,14 @@ def _rel_memo(nfp):
 
 
 def _memo_put(memo, key, rings):
-    # 상한 초과 시 clear (순수 메모라 결과 비트동일).
+    # 상한 초과 시 clear (비트동일)
     if len(memo) >= _REL_CAP:
         memo.clear()
     memo[key] = rings
 
 
 def relative_nfp(pre, moving: int, fixed: int, o_m: int, o_f: int, k: int) -> list:
-    """layer k에서 `moving`의 `fixed`에 대한 NFP. footprint가 겹칠 필요충분조건이
-    (pos_moving - pos_fixed)가 내부에 있는 것이 되도록 표현.
-
-    캐시는 정렬된 쌍에 대해서만 NFP 저장:
-      fixed  < moving : 캐시 키 (fixed, moving); 이미 올바른 offset.
-      moving < fixed  : 캐시 키 (moving, fixed); reflect해서 offset 부호 뒤집음.
-    """
+    """layer k의 상대 NFP (겹침 <=> pos차가 내부; 정렬쌍 캐시 + reflect)."""
     if fixed < moving:
         return pre.nfp.same_level(fixed, moving, o_f, o_m, k)
     memo = _rel_memo(pre.nfp)
@@ -171,10 +153,7 @@ def relative_nfp(pre, moving: int, fixed: int, o_m: int, o_f: int, k: int) -> li
 
 def relative_nfp_crane(pre, moving: int, fixed: int, o_m: int, o_f: int,
                        k_m: int, k_f: int) -> list:
-    """`moving`의 layer k_m을 `fixed`의 layer k_f에 대해 본 crane NFP. 두 layer가
-    겹칠 필요충분조건이 (pos_moving - pos_fixed)가 내부에 있는 것이 되도록 표현.
-    relative_nfp와 같은 정렬-쌍 + reflection 처리, 단 layer 인덱스는 독립
-    (crane sweep은 moving layer k를 resident layer j >= k와 짝지음)."""
+    """crane NFP (layer 쌍 독립; 정렬쌍 캐시 + reflect)."""
     if fixed < moving:
         return pre.nfp.crane(fixed, moving, o_f, o_m, k_f, k_m)
     memo = _rel_memo(pre.nfp)
@@ -186,9 +165,7 @@ def relative_nfp_crane(pre, moving: int, fixed: int, o_m: int, o_f: int,
     return rings
 
 
-# -----------------------------------------------------------------------------
-# bbox 헬퍼 (destroy 연산자용)
-# -----------------------------------------------------------------------------
+# -- bbox 헬퍼 --
 
 def centroid_of_bbox(bb: tuple) -> tuple:
     return ((bb[0] + bb[2]) * 0.5, (bb[1] + bb[3]) * 0.5)

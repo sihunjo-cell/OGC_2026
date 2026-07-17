@@ -1,9 +1,4 @@
-"""
-Outer.operators -- 적응적 연산자 선택(AOS).
-
-세그먼트별 가중치로 destroy/repair 연산자를 룰렛 선택. 각 해 해시는 처음
-볼 때만 채점하고, 세그먼트 경계마다 W <- W*(1-r) + r*(score/attempts)로 갱신.
-"""
+"""적응적 연산자 선택(AOS): 룰렛 선택 + 세그먼트 가중치 갱신."""
 
 from __future__ import annotations
 
@@ -12,8 +7,7 @@ from collections import defaultdict
 
 
 def _vkey(sol):
-    """Solution.key()(5×n 튜플)의 16바이트 다이제스트. 멤버십 판정은 동일하되
-    방문집합 메모리를 O(n)/키 -> 상수화(대형·장예산 누적성장 상한)."""
+    """방문집합 키 = Solution.key()의 16B digest (메모리 상수화)."""
     return hashlib.blake2b(repr(sol.key()).encode(), digest_size=16).digest()
 
 

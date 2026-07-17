@@ -1,7 +1,4 @@
-"""
-Outer.state -- ALNS Solution: 베이 배정 + 실현된 배치/타이밍 + 목적함수 분해.
-key()는 방문 집합용 해시 가능한 지문.
-"""
+"""ALNS Solution 상태 (key() = 방문집합 지문)."""
 
 from __future__ import annotations
 

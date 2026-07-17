@@ -1,10 +1,4 @@
-"""
-Phase1.timing -- Init_Timing.
-
-임시 timing(ENTRY = EST, EXIT = ENTRY + P)을 잡고 Z1/Z2/Z3를 계산해 Phase 2용
-Phase1Output으로 묶는다. Z2/Z3는 eval 서버와 값을 맞추려고 utils.check_feasibility
-공식을 그대로 쓴다.
-"""
+"""잠정 timing(ENTRY=EST) + Z1/Z2/Z3 계산 (Z2/Z3 = 공식 utils 공식 그대로)."""
 
 from __future__ import annotations
 
@@ -31,7 +25,7 @@ def init_timing(bay: list, prob_info: dict, pre) -> Phase1Output:
     # 임시 Z1
     Z1 = sum(max(0, exit_[i] - D[i]) for i in range(n))
 
-    # Z2: 정규화 load 불균형 최댓값에 floor (utils 공식)
+    # Z2 (utils 공식)
     load = [0.0] * m
     for i in range(n):
         load[bay[i]] += L[i]

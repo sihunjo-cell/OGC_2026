@@ -1,9 +1,4 @@
-"""
-Phase1 -- OGC 2026 bay 배정.
-
-BuildBayAssignment는 목적함수 가중 first-fit greedy와 Init_Timing을 돌려
-Phase 2가 바로 쓰는 Phase2.contract.Phase1Output을 반환한다.
-"""
+"""Phase 1: greedy bay 배정 + 잠정 타이밍."""
 
 from .config import Phase1Config
 from .driver import BuildBayAssignment, build_bay_assignment

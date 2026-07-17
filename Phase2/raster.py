@@ -1,10 +1,5 @@
 # Phase2/raster.py
-"""Phase2.raster -- 라스터 기하 엔진: 블록의 배치가능 정수 앵커를 전수 스캔.
-
-soundness: 마스크는 각 layer convex hull의 superset(단위칸 touch=1). 마스크 disjoint
-⇒ hull 면적 겹침 없음 ⇒ 폴리곤 겹침 없음(변 접촉=합법) ⇒ 공간충돌 없음 + 크레인
-진입(j>=k) 가능이 증명된다. 시간축(내 EXIT·역방향 차단)은 라스터가 증명 못 하므로
-호출자가 정확 게이트(crane)를 통과시켜야 한다. shapely는 마스크 빌드 때 층당 1회만."""
+"""라스터 기하 엔진: 배치가능 정수 앵커 전수 스캔 (soundness 계약 = hull-mask 메모리 원장)."""
 
 from __future__ import annotations
 
@@ -27,8 +22,7 @@ class Raster:
         self.H = [int(math.ceil(b["height"])) for b in prob_info["bays"]]
         self.occ = [dict() for _ in range(self.n_bays)]   # occ[j][k] -> int16 (H, W) 카운트
         self.ver = [0] * self.n_bays
-        # (i, o) -> (uint8 (K, MH, MW), mx0, my0). 빌드 후 불변(읽기 전용)이라
-        # mask_share=True면 pre에 붙여 설계도(Raster 인스턴스) 간 재사용해도 안전.
+        # (i,o) -> 마스크: 빌드 후 불변이라 pre 공유 안전
         if mask_share:
             cache = getattr(pre, "_raster_mask_cache", None)
             if cache is None:
@@ -40,12 +34,11 @@ class Raster:
         self._uge = {}     # j -> (ver, [int32 (H, W)] 층별 suffix union)
         self._scan = {}    # j -> {(i, o): (ver, feas, mx0, my0)}
         self._cscan = {}   # j -> {(i, o): (ver, total, mx0, my0)} (nestle count 캐시)
-        self._field = {}   # j -> (ver, int32 (H+2, W+2) 접촉장, 테두리=벽)
-        # 공간 국소 무효화용 변경영역 로그. _dirty[j][v] = 버전 v->v+1 스탬프의
-        # 발자국 사각형(8이웃 팽창 1칸 포함, 격자 좌표로 클립). len == ver[j] 불변.
+        self._field = {}   # j -> (ver, 접촉장)
+        # 증분 scan용 변경영역 로그 (규약 = ogc-code-invariants)
         self._incremental = incremental
         self._dirty = [[] for _ in range(self.n_bays)]
-        # scan 캐시 바이트 상한(초과 시 전량 clear; miss시 재계산이라 비트동일).
+        # scan 캐시 바이트 상한 (초과 시 전량 clear = 비트동일)
         self._scan_cap = int(os.environ.get("OGC_SCAN_CAP_MB", "600")) * 1_000_000
         self._scan_bytes = 0
 
@@ -70,14 +63,13 @@ class Raster:
         boxes = shapely.box(mx0 + cs.ravel(), my0 + rs.ravel(),
                             mx0 + cs.ravel() + 1.0, my0 + rs.ravel() + 1.0)
         for k, ring in enumerate(layers):
-            # hull rasterize 필수: [mask disjoint ⇒ NFP-clear] 계약
-            # ([[ogc-raster-hull-mask-soundness]]). bbox 동일이라 정렬 불변.
+            # hull 래스터화 필수 (soundness 계약, 변경 금지 -- hull-mask 메모리 원장)
             hull = Polygon(ring).convex_hull
             hit = shapely.intersects(hull, boxes)   # 경계 touch 포함 => superset
             mask[k] = hit.reshape(MH, MW).astype(np.uint8)
         return mask, mx0, my0
 
-    # -- 점유 (카운트라서 add/remove가 정확한 역연산) ---------------------------
+    # -- 점유 스탬프 (카운트 그리드) --
 
     def add(self, j: int, i: int, o: int, pos):
         self._stamp(j, i, o, pos, 1)
@@ -100,8 +92,7 @@ class Raster:
             g[r0:r0 + MH, c0:c0 + MW] += np.int16(sgn) * mask[k]
         self.ver[j] += 1
         if self._incremental:
-            # 발자국 [r0, r0+MH) x [c0, c0+MW) 를 8이웃 팽창 1칸만큼 넓혀 사각형으로.
-            # 포함 좌표계: 하한 -1, 상한 +MH/+MW (격자 경계 안으로 클립).
+            # 발자국 8이웃 1칸 팽창 사각형 기록
             fr0 = r0 - 1 if r0 > 0 else 0
             fc0 = c0 - 1 if c0 > 0 else 0
             fr1 = r0 + MH if r0 + MH < self.H[j] else self.H[j] - 1
@@ -113,7 +104,7 @@ class Raster:
         else:
             PROBE.on_stamp(j, i, sgn)
 
-    # -- suffix union: union_ge(j)[k] = OR(층 >= k 점유), (j, ver) 캐시 ---------
+    # -- suffix union: union_ge(j)[k] = OR(층 >= k 점유) --
 
     def union_ge(self, j: int):
         cached = self._uge.get(j)
@@ -135,8 +126,7 @@ class Raster:
     # -- 전수 위치 스캔 ----------------------------------------------------------
 
     def _affected_region(self, j, v0, v1, MH, MW, R, C):
-        """v0~v1 스탬프가 바꿀 수 있는 (MH, MW) 블록의 앵커 범위 (ar0, ar1, ac0, ac1)
-        반열린, 안 바뀌면 None. 변경영역 합집합과 겹치는 앵커 윈도로 역산."""
+        """v0~v1 스탬프가 건드릴 앵커 범위(반열린) 또는 None(무영향)."""
         dirty = self._dirty[j]
         if v1 > len(dirty):          # 로그가 v1을 못 덮음(이론상 없음) -> 전체 재계산 신호
             return (0, R, 0, C)
@@ -166,8 +156,7 @@ class Raster:
         return (ar0, ar1, ac0, ac1)
 
     def _account(self, per_bay, key, feas):
-        """scan 캐시 바이트 추적 + 상한 초과 시 전량 clear(비트동일: miss시 재계산).
-        같은 키 재저장은 old 바이트를 빼고 다시 더해 재스캔 과다계수를 피한다."""
+        """scan 캐시 바이트 계정 (재저장 시 old 차감, 상한 초과 = 전량 clear)."""
         old = per_bay.get(key)
         if old is not None:
             self._scan_bytes -= old[1].nbytes
@@ -180,13 +169,7 @@ class Raster:
             self._scan_bytes = feas.nbytes
 
     def scan(self, j: int, i: int, o: int):
-        """bay j에서 (i, o)의 모든 정수 앵커 feasibility.
-
-        반환 (feas (R, C) bool, mx0, my0): feas[r, c] <=> 위치 (c-mx0, r-my0)의
-        마스크가 점유 suffix-union(union_ge)과 disjoint (= 공간충돌 없음 + 크레인
-        진입 j>=k 가능; hull superset이라 변 접촉만 남고 면적 겹침은 없음). 호출자가
-        IFP로 클립해야 컨테인먼트 보장. 증분 모드: 변경영역과 안 겹치면 캐시, 겹치면
-        그 앵커 범위만 재계산(전체 재계산과 비트 동일)."""
+        """(i,o) 전 앵커 feasibility (feas, mx0, my0) -- 호출자가 IFP 클립, 증분 캐시 비트동일."""
         per_bay = self._scan.setdefault(j, {})
         cached = per_bay.get((i, o))
         v1 = self.ver[j]
@@ -198,7 +181,7 @@ class Raster:
         R = self.H[j] - MH + 1
         C = self.W[j] - MW + 1
 
-        # -- 증분 경로: 캐시가 있고 크기 유효할 때만 --------------------------
+        # 증분 경로
         if (self._incremental and cached is not None and R > 0 and C > 0
                 and cached[1].shape == (R, C)):
             A = self._affected_region(j, cached[0], v1, MH, MW, R, C)
@@ -207,10 +190,13 @@ class Raster:
                 feas = cached[1]
                 self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
+                ct = self._cscan.get(j, {}).get((i, o))
+                if ct is not None and ct[0] == cached[0]:      # count 캐시도 동반 유효
+                    self._cscan[j][(i, o)] = (v1, ct[1], ct[2], ct[3])
                 PROBE.on_scan_hit(j, i, o)
                 return feas, mx0, my0
             ar0, ar1, ac0, ac1 = A
-            if (ar1 - ar0) * (ac1 - ac0) < R * C:      # 진짜 부분일 때만
+            if (ar1 - ar0) * (ac1 - ac0) < R * C:      # 부분일 때만
                 feas = cached[1].copy()
                 uge = self.union_ge(j)
                 sub = np.zeros((ar1 - ar0, ac1 - ac0), dtype=np.int32)
@@ -225,16 +211,23 @@ class Raster:
                 feas[ar0:ar1, ac0:ac1] = (sub == 0)
                 self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
+                cs_bay = self._cscan.get(j)
+                ct = cs_bay.get((i, o)) if cs_bay is not None else None
+                if ct is not None and ct[0] == cached[0] and ct[1].shape == (R, C):
+                    tot2 = ct[1].copy()                        # 같은 sub로 count도 동기 갱신
+                    tot2[ar0:ar1, ac0:ac1] = sub
+                    self._account(cs_bay, (i, o), tot2)
+                    cs_bay[(i, o)] = (v1, tot2, mx0, my0)
                 PROBE.on_scan_miss(j, i, o, cached[0], v1, False,
                                    float(ar1 - ar0) * (ac1 - ac0) * MH * MW,
                                    int(feas.sum()))
                 return feas, mx0, my0
-            # A가 사실상 전체면 아래 전체 재계산으로 낙하
+            # A가 사실상 전체면 전체 재계산으로 낙하
 
-        # -- 전체 재계산 (콜드 / 비증분 / A=전체) ----------------------------
+        # 전체 재계산 (콜드 / 비증분 / A=전체)
         _cached_ver = cached[0] if cached is not None else 0
         _cold = cached is None
-        _cost = 0.0                      # einsum FLOP 프록시 (활성층 R*C*MH*MW 합)
+        _cost = 0.0                      # einsum FLOP 프록시
         if R <= 0 or C <= 0:
             feas = np.zeros((max(R, 0), max(C, 0)), dtype=bool)
         else:
@@ -249,6 +242,10 @@ class Raster:
                 win = np.lib.stride_tricks.sliding_window_view(Vk, (MH, MW))
                 total += np.einsum('rcij,ij->rc', win, m32[k])
             feas = (total == 0)
+            cs_bay = self._cscan.get(j)
+            if cs_bay is not None and (i, o) in cs_bay:        # 기존 count 사용처만 carry
+                self._account(cs_bay, (i, o), total)
+                cs_bay[(i, o)] = (v1, total, mx0, my0)
         if not _cold and cached[1].shape == feas.shape:
             PROBE.on_scan_diff(int(np.count_nonzero(feas != cached[1])), feas.size)
         self._account(per_bay, (i, o), feas)
@@ -258,11 +255,7 @@ class Raster:
         return feas, mx0, my0
 
     def count_scan(self, j: int, i: int, o: int):
-        """(i, o)의 앵커별 겹침 카운트 그리드 (total (R, C) int32, mx0, my0).
-
-        scan과 같은 수식/캐시 구조로 total을 유지(nestle: 0<total<=K가 후보).
-        부분영역 갱신은 전체 재계산과 비트동일, 바이트 예산은 scan 캐시와 공유.
-        R/C<=0 이면 total=None(캐시 안 함)."""
+        """앵커별 겹침 카운트 그리드 (nestle 후보용, scan과 동형 캐시; R/C<=0이면 None)."""
         per_bay = self._cscan.setdefault(j, {})
         cached = per_bay.get((i, o))
         v1 = self.ver[j]
@@ -310,10 +303,10 @@ class Raster:
         per_bay[(i, o)] = (v1, total, mx0, my0)
         return total, mx0, my0
 
-    # -- 접촉점수 셀 정렬 (인터록 패킹 레버, 플레이북 v13) ------------------------
+    # -- 접촉점수 셀 정렬 --
 
     def contact_field(self, j: int):
-        """(H+2, W+2) int32 접촉장: 테두리(=벽) 1, 내부는 층0 점유(>0)."""
+        """접촉장 (H+2, W+2): 테두리=벽 1, 내부=층0 점유."""
         cached = self._field.get(j)
         if cached is not None and cached[0] == self.ver[j]:
             return cached[1]
@@ -329,14 +322,7 @@ class Raster:
 
     def order_cells(self, j: int, i: int, o: int, feas, cap: int,
                     futures=None, frag_w: float = 0.0):
-        """feas True 앵커를 접촉점수 내림차순(동점 bottom-left)으로 최대 cap개.
-        점수 = 풋프린트 halo(4-이웃 둘레 셀)와 [벽 + 층0 점유]의 겹침 카운트.
-
-        futures + frag_w > 0 이면 ΔF(파편화 증분) 페널티를 결합(FGD ATC'23 전이):
-        점수 -= frag_w * Σ_m kill_m/(tot_m+1). kill_m = 앵커 (r,c)에 i를 놓을 때
-        bbox가 교차해 죽는 m의 feasible 앵커 수(SAT box-sum, 마스크-교차의 superset
-        = 보수적 과대). futures 원소 = (m, MH_m, MW_m, sat, tot); sat는 IFP-클립된
-        m의 feasible 지도 적분영상 (R_m+1, C_m+1). frag_w == 0 경로는 기존과 동일."""
+        """앵커를 접촉점수 내림차순 cap개로 (frag_w>0 = ΔF 페널티 결합, 공식은 invariants 원장)."""
         rs, cs = np.nonzero(feas)
         if rs.size == 0:
             return []
@@ -348,8 +334,7 @@ class Raster:
             halo[dr:dr + MH, dc:dc + MW] |= fp
         halo[1:MH + 1, 1:MW + 1] &= (1 - fp)
         field = self.contact_field(j)
-        # field 패딩 1칸 = halo 확장 1칸이 상쇄 -> 앵커 (r, c)의 halo 좌상단은
-        # field[r, c]에서 시작. 윈도 수 = (H+2)-(MH+2)+1 = R (feas와 정렬).
+        # field 패딩 1칸 = halo 확장 1칸 상쇄 (앵커 정렬)
         win = np.lib.stride_tricks.sliding_window_view(field, (MH + 2, MW + 2))
         scores = np.einsum('rcij,ij->rc', win, halo)
         vals = scores[rs, cs]
@@ -357,8 +342,7 @@ class Raster:
             pen = np.zeros(rs.size, dtype=np.float64)
             for (_m, MHm, MWm, sat, tot) in futures:
                 Rm, Cm = sat.shape[0] - 1, sat.shape[1] - 1
-                # i@{(r,c)}는 [r, r+MH)x[c, c+MW) 점유. bbox 교차하는 m 앵커 창
-                # (반열린 상한): q_r ∈ [r-MHm+1, r+MH), q_c ∈ [c-MWm+1, c+MW).
+                # bbox 교차 앵커 창 (반열린)
                 r0 = np.clip(rs - MHm + 1, 0, Rm)
                 r1 = np.clip(rs + MH, 0, Rm)
                 c0 = np.clip(cs - MWm + 1, 0, Cm)
@@ -372,7 +356,7 @@ class Raster:
 
     @staticmethod
     def sat_of(allow) -> "np.ndarray":
-        """bool/int 지도의 적분영상 (H+1, W+1) int32: sat[a, b] = allow[:a, :b] 합."""
+        """적분영상 (H+1, W+1): sat[a, b] = allow[:a, :b] 합."""
         H, W = allow.shape
         sat = np.zeros((H + 1, W + 1), dtype=np.int32)
         np.cumsum(np.cumsum(allow, axis=0, dtype=np.int32), axis=1,

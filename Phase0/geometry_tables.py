@@ -1,5 +1,4 @@
-"""Phase0.geometry_tables -- 0.2단계: (block, orientation)별 테이블(poly, bbox,
-area, IFP), 동시 존재 쌍 집합, lazy No-Fit-Polygon 캐시."""
+"""(block, orientation)별 기하 테이블(poly/bbox/area/IFP) + lazy NFP 캐시."""
 
 from __future__ import annotations
 
@@ -17,21 +16,15 @@ from .geometry import (simplify_layer, bounding_box, polygon_area,
 # -----------------------------------------------------------------------------
 
 class NFPCache:
-    """Lazy 메모이즈 No-Fit-Polygon 저장소 (ring은 첫 요청 시 계산).
-
-    캐시 키에 양쪽 orientation 포함(NFP는 orientation 의존).
-    규약: NFP(A,B) = A (+) (-B), A=block i, B=block n. footprint 겹침
-    <=> (pos_n - pos_i)가 반환 ring 내부.
-    """
+    """lazy NFP 저장소 (규약 NFP(A,B)=A⊕(−B), 겹침 <=> pos차가 ring 내부)."""
 
     def __init__(self, poly: list, mode: str = None):
         # poly[i][o][k] -> list[(x, y)] layer k 정점
         self._poly = poly
         self._mode = (mode or GEOM_MODE)
-        self._cache: dict = {}       # (i,n,oi,on,ki,kj) -> pieces/rings
-        self._decomp: dict = {}      # (i,o,k) -> 볼록 분할 (fast/pieces 경로)
-        # 엔트리 상한(초과 시 clear; 순수 메모라 결과 비트동일). 프로세스-수명
-        # 무한성장을 막는다. train 스케일선 무발동.
+        self._cache: dict = {}       # (i,n,oi,on,ki,kj) -> rings
+        self._decomp: dict = {}      # (i,o,k) -> 볼록 분할
+        # 엔트리 상한 (초과 시 clear = 비트동일, 무한성장 방지)
         self._cap = int(os.environ.get("OGC_NFP_CAP", "250000"))
 
     def _layer(self, i: int, o: int, k: int):
@@ -41,7 +34,7 @@ class NFPCache:
         return None
 
     def _decompose(self, i: int, o: int, k: int):
-        """(block, orientation, layer) 하나의 볼록 분할 (캐시됨)."""
+        """(i, o, k)의 볼록 분할 (캐시)."""
         key = (i, o, k)
         d = self._decomp.get(key)
         if d is None:
@@ -51,8 +44,7 @@ class NFPCache:
         return d
 
     def crane(self, i: int, n: int, oi: int, on: int, k_i: int, k_j: int) -> list:
-        """block i(orient oi)의 layer k_i와 block n(orient on)의 layer k_j 간 NFP.
-        순수 정점 ring 반환. 한쪽 layer라도 없으면 []."""
+        """layer 쌍 (k_i, k_j) 간 NFP ring (없는 layer = [])."""
         key = (i, n, oi, on, k_i, k_j)
         cached = self._cache.get(key)
         if cached is not None:
@@ -62,11 +54,11 @@ class NFPCache:
             B = self._layer(n, on, k_j)
             rings = nfp_rings(A, B) if (A is not None and B is not None) else []
         elif self._mode == "pieces":
-            # union 없는 볼록 조각 (실험 전용, 목적함수 바뀔 수 있음)
+            # 실험 전용 (목적함수 바뀔 수 있음)
             A = self._decompose(i, oi, k_i)
             B = self._decompose(n, on, k_j)
             rings = nfp_pieces(A, B) if (A and B) else []
-        else:  # "fast": 순수 파이썬 Minkowski + shapely union (shapely와 동일 ring)
+        else:  # fast: shapely 레퍼런스와 동일 ring
             A = self._decompose(i, oi, k_i)
             B = self._decompose(n, on, k_j)
             rings = nfp_rings_hybrid(A, B) if (A and B) else []
@@ -77,7 +69,7 @@ class NFPCache:
         return rings
 
     def same_level(self, i: int, n: int, oi: int, on: int, k: int) -> list:
-        """두 block의 layer k 간 NFP (같은 높이 공간 충돌)."""
+        """같은 layer k 간 NFP."""
         return self.crane(i, n, oi, on, k, k)
 
 
@@ -87,14 +79,7 @@ class NFPCache:
 
 def precompute_geometry(prob_info: dict, dp_tol: Optional[float] = None,
                         geom_mode: Optional[str] = None) -> dict:
-    """(block, orientation)별 지오메트리 + IFP 테이블 + lazy NFP 캐시(dp_tol 기본 config.DP_TOL).
-
-    반환 dict:
-      poly[i][o][k] -> [(x,y)] layer 정점; bbox[i][o]; area[i][o] (layer 합)
-      IFP[i][o][j]  -> ((x_lo,x_hi),(y_lo,y_hi)) 정수 기준점 범위. x_lo > x_hi
-                       (또는 y_lo > y_hi)면 block이 bay j에 안 들어감.
-      nfp           -> lazy NFPCache; n_blocks, n_bays.
-    """
+    """기하 테이블 dict(poly/bbox/area/IFP/nfp) -- IFP 비면(x_lo>x_hi) 그 bay에 못 들어감."""
     if dp_tol is None:
         dp_tol = DP_TOL
 

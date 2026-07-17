@@ -1,13 +1,8 @@
-"""
-Outer.realize -- bay 배정을 완전한 Solution으로 평가.
-
-bay 배정을 고정하고 Phase 2(이벤트 구동 dispatch 구성 + 크레인 repair)를 한 번
-돌려 완전한 레이아웃과 목적함수를 산출한다. 공식 utils 체커가 있으면 그 값으로
-목적함수를 인증(제출 서버와 일치), 없으면 내부 공식으로 폴백한다.
-"""
+"""bay 배정 -> Phase 2 실행 -> 공식 인증 목적함수의 Solution."""
 
 from __future__ import annotations
 
+import time
 from copy import deepcopy
 
 from Phase1.timing import init_timing
@@ -30,7 +25,7 @@ def _solution_from_result(bay: list, p1, res, prob_info: dict, utils_mod=None) -
     z1 = res.Z1 if (feasible and res.Z1 is not None) else _BIG
     objective = _objective_from_parts(prob_info, z1, z2, z3)
 
-    # 제출 서버와 값을 맞추려고, 가능하면 공식 체커의 목적함수로 인증한다.
+    # 가능하면 공식 체커 값으로 인증
     if utils_mod is not None and res.solution is not None:
         try:
             chk = utils_mod.check_feasibility(prob_info, res.solution)
@@ -49,8 +44,7 @@ def _solution_from_result(bay: list, p1, res, prob_info: dict, utils_mod=None) -
     elif not feasible:
         objective = float("inf")
 
-    # 실현(재라우팅 후) bay를 ALNS 상태로 되먹임(탐색 붕괴 방지). dyn-off면 입력과
-    # 동일 = 바이트동일. Z2/Z3는 체커가 실현 배정 기준으로 인증.
+    # 실현 bay를 ALNS로 되먹임 (탐색 붕괴 방지 -- 근거 = dynamic-bay 원장)
     rbay = res.bay if getattr(res, "bay", None) is not None else bay
     return Solution(
         bay=list(rbay), entry=res.entry, exit_=res.exit_,
@@ -70,4 +64,7 @@ def realize(bay: list, prob_info: dict, pre, phase2cfg=None, deadline=None) -> S
     except Exception:
         utils_mod = None
     res = PlaceAndCrane(prob_info, p1, pre, cfg, deadline=deadline)
+    # 마감 후 공식 인증 생략 (미인증 = inf 처리, 근거 = P6 원장)
+    if deadline is not None and time.perf_counter() >= deadline:
+        utils_mod = None
     return _solution_from_result(bay, p1, res, prob_info, utils_mod)

@@ -1,9 +1,4 @@
-"""Phase2.crane -- 2.4 크레인 실현가능성.
-
-  crane_obstructed  -- 값싼 단일 위치 검사 (utils.check_entry/check_exit와 동일
-    논리). driver의 earliest-slot forcing에서 사용.
-  crane_feasibility -- utils.check_feasibility(평가 기준)로 최종 인증. feasibility와
-    충돌 block id들을 반환해서 repair가 시간상 밀 수 있게 한다."""
+"""크레인 실현가능성: 단일 위치 검사(crane_obstructed) + 공식 utils 최종 인증."""
 
 from __future__ import annotations
 
@@ -13,12 +8,8 @@ import pathlib
 from . import geometry_query as gq
 
 
-# -- 단일 위치 크레인 검사 (2.4) ----------------------------------------
-
 def crane_obstructed(i, o, pos, blockers, coords, orient, pre) -> bool:
-    """(o, pos)의 블록 i가 `blockers` 중 하나에라도 크레인이 막히면 True
-    (i의 layer k가 blocker의 layer j >= k와 겹침 -- j>=k sweep 규칙).
-    entry/exit 두 순간 모두에 사용."""
+    """블록 i가 blockers에 크레인 sweep(layer j>=k)으로 막히면 True."""
     px, py = pos
     Ki = gq.num_layers(pre, i, o)
     for n in blockers:
@@ -37,11 +28,7 @@ def crane_obstructed(i, o, pos, blockers, coords, orient, pre) -> bool:
 
 def crane_blocks_resident(candidate_i, candidate_o, candidate_pos,
                           resident_n, coords, orient, pre) -> bool:
-    """Return True when placing `candidate_i` would obstruct resident `resident_n`.
-
-    This is the resident-perspective counterpart of `crane_obstructed(...)`,
-    used as a cheap proxy during candidate scoring.
-    """
+    """후보 배치가 상주 resident_n의 반출 sweep을 막으면 True (역방향 검사)."""
     rx, ry = coords[resident_n]
     on = orient[resident_n]
     dx = rx - candidate_pos[0]
@@ -57,11 +44,8 @@ def crane_blocks_resident(candidate_i, candidate_o, candidate_pos,
     return False
 
 
-# -- 최종 인증 (utils) ----------------------------------------------
-
 def _load_utils():
-    """대회 utils 모듈 import (서버에선 그냥 import, 안 되면 ogc2026/baseline
-    개발 경로로 폴백)."""
+    """공식 utils import (실패 시 개발 경로 폴백)."""
     try:
         import utils
         return utils
@@ -75,7 +59,7 @@ def _load_utils():
 
 
 def _blocks_in_violations(violations: list) -> list:
-    """utils violation 문자열("... block <id> ...")에서 서로 다른 block id 추출."""
+    """violation 문자열에서 block id 추출."""
     ids = []
     seen = set()
     for v in violations:
@@ -93,12 +77,7 @@ def _blocks_in_violations(violations: list) -> list:
 
 
 def crane_feasibility(prob_info: dict, solution: dict) -> tuple:
-    """utils.check_feasibility로 solution 인증.
-
-    반환: (feasible: bool, conflict_block_ids: list[int], stage: int).
-    stage는 실패한 단계 (2/3 = 크레인 entry/exit, 4 = 공간, 5 = 순서),
-    feasible이면 5.
-    """
+    """공식 인증 -> (feasible, 충돌 block ids, stage). stage 2/3=크레인, 4=공간, 5=순서."""
     utils = _load_utils()
     res = utils.check_feasibility(prob_info, solution)
     if res["feasible"]:
