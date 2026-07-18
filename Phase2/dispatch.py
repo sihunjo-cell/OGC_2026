@@ -42,7 +42,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             elig_bays[i] = cand
     raster = Raster(prob_info, pre,
                     incremental=bool(getattr(cfg, "scan_incremental", True)),
-                    mask_share=bool(getattr(cfg, "mask_cache_share", False)))
+                    mask_share=bool(getattr(cfg, "mask_cache_share", False)),
+                    morph=bool(getattr(cfg, "scan_morph", False)))
     fail_stop = int(getattr(cfg, "dispatch_admit_fail_stop", 0) or 0)
     # ΔF 파편화 항 (FLOP 캡 초과 시 결정론적 셧오프)
     frag_w = float(getattr(cfg, "dispatch_fragdelta", 0.0) or 0.0)

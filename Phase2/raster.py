@@ -12,10 +12,74 @@ from shapely.geometry import Polygon
 
 from ._diag import PROBE
 
+try:
+    from numba import njit as _njit
+    _HAVE_NUMBA = True
+except Exception:                                    # pragma: no cover
+    _HAVE_NUMBA = False
+
+    def _njit(*a, **k):                              # no-op 데코레이터
+        def _wrap(f):
+            return f
+        return _wrap
+
+
+@_njit(cache=True)
+def _gap_rows(V):                                    # pragma: no cover (njit)
+    """gap[y,x] = x부터의 수평 자유 run 길이 (V != 0 = 점유)."""
+    H, W = V.shape
+    g = np.zeros((H, W + 1), np.int32)
+    for y in range(H):
+        for x in range(W - 1, -1, -1):
+            g[y, x] = 0 if V[y, x] != 0 else g[y, x + 1] + 1
+    return g
+
+
+@_njit(cache=True)
+def _row_prefix(V):                                  # pragma: no cover (njit)
+    """P[y,x] = row y의 [0,x) 점유 합 (V ∈ {0,1})."""
+    H, W = V.shape
+    P = np.zeros((H, W + 1), np.int32)
+    for y in range(H):
+        acc = 0
+        for x in range(W):
+            if V[y, x] != 0:
+                acc += 1
+            P[y, x + 1] = acc
+    return P
+
+
+@_njit(cache=True)
+def _count_row_layer(P, starts, lens, R, C, total):  # pragma: no cover (njit)
+    """행-run prefix 차분 카운트 (einsum total과 정수 동일)."""
+    nr = starts.shape[0]
+    for r in range(R):
+        for c in range(C):
+            acc = 0
+            for rr in range(nr):
+                s = starts[rr]
+                if s >= 0:
+                    acc += P[r + rr, c + s + lens[rr]] - P[r + rr, c + s]
+            total[r, c] += acc
+
+
+@_njit(cache=True)
+def _feas_gap_layer(gap, starts, lens, R, C, feas):  # pragma: no cover (njit)
+    """행-run 앵커판정 (einsum total==0과 판정 동치, 조기탈출)."""
+    nr = starts.shape[0]
+    for r in range(R):
+        for c in range(C):
+            if feas[r, c]:
+                for rr in range(nr):
+                    s = starts[rr]
+                    if s >= 0 and gap[r + rr, c + s] < lens[rr]:
+                        feas[r, c] = False
+                        break
+
 
 class Raster:
     def __init__(self, prob_info: dict, pre, incremental: bool = True,
-                 mask_share: bool = False):
+                 mask_share: bool = False, morph: bool = False):
         self.pre = pre
         self.n_bays = pre.n_bays
         self.W = [int(math.ceil(b["width"])) for b in prob_info["bays"]]
@@ -35,6 +99,11 @@ class Raster:
         self._scan = {}    # j -> {(i, o): (ver, feas, mx0, my0)}
         self._cscan = {}   # j -> {(i, o): (ver, total, mx0, my0)} (nestle count 캐시)
         self._field = {}   # j -> (ver, 접촉장)
+        # 행-gap 커널 (판정 동치 가속; numba 부재 시 einsum 폴백)
+        self._morph = bool(morph) and _HAVE_NUMBA
+        self._runs = {}    # (i, o) -> [(starts, lens)]층별 | None(비단일 run 폴백)
+        self._gap = {}     # j -> (ver, {k: gap})
+        self._psum = {}    # j -> (ver, {k: row-prefix})
         # 증분 scan용 변경영역 로그 (규약 = ogc-code-invariants)
         self._incremental = incremental
         self._dirty = [[] for _ in range(self.n_bays)]
@@ -68,6 +137,49 @@ class Raster:
             hit = shapely.intersects(hull, boxes)   # 경계 touch 포함 => superset
             mask[k] = hit.reshape(MH, MW).astype(np.uint8)
         return mask, mx0, my0
+
+    def _mask_runs(self, i: int, o: int):
+        """층별 행-run (starts, lens) -- 비단일 run 행 존재 시 None(einsum 폴백)."""
+        key = (i, o)
+        if key in self._runs:
+            return self._runs[key]
+        mask, _, _ = self.mask(i, o)
+        out, ok = [], True
+        for k in range(mask.shape[0]):
+            m = mask[k]
+            starts = np.full(m.shape[0], -1, np.int32)
+            lens = np.zeros(m.shape[0], np.int32)
+            for r in range(m.shape[0]):
+                idx = np.nonzero(m[r])[0]
+                if idx.size == 0:
+                    continue
+                if int(idx[-1]) - int(idx[0]) + 1 != idx.size:
+                    ok = False
+                    break
+                starts[r] = idx[0]
+                lens[r] = idx.size
+            if not ok:
+                break
+            out.append((starts, lens))
+        res = out if ok else None
+        self._runs[key] = res
+        return res
+
+    def _gaps(self, j: int) -> dict:
+        cached = self._gap.get(j)
+        if cached is not None and cached[0] == self.ver[j]:
+            return cached[1]
+        d: dict = {}
+        self._gap[j] = (self.ver[j], d)
+        return d
+
+    def _psums(self, j: int) -> dict:
+        cached = self._psum.get(j)
+        if cached is not None and cached[0] == self.ver[j]:
+            return cached[1]
+        d: dict = {}
+        self._psum[j] = (self.ver[j], d)
+        return d
 
     # -- 점유 스탬프 (카운트 그리드) --
 
@@ -181,6 +293,47 @@ class Raster:
         R = self.H[j] - MH + 1
         C = self.W[j] - MW + 1
 
+        # 행-gap 커널 (판정 동치; count_scan은 자체 miss 시 einsum = 총량 불변)
+        if self._morph:
+            runs = self._mask_runs(i, o)
+            if runs is not None:
+                if (self._incremental and cached is not None
+                        and R > 0 and C > 0 and cached[1].shape == (R, C)):
+                    A = self._affected_region(j, cached[0], v1, MH, MW, R, C)
+                    if A is None:
+                        feas = cached[1]
+                        self._account(per_bay, (i, o), feas)
+                        per_bay[(i, o)] = (v1, feas, mx0, my0)
+                        ct = self._cscan.get(j, {}).get((i, o))
+                        if ct is not None and ct[0] == cached[0]:
+                            self._cscan[j][(i, o)] = (v1, ct[1], ct[2], ct[3])
+                        PROBE.on_scan_hit(j, i, o)
+                        return feas, mx0, my0
+                _cold = cached is None
+                if R <= 0 or C <= 0:
+                    feas = np.zeros((max(R, 0), max(C, 0)), dtype=bool)
+                else:
+                    uge = self.union_ge(j)
+                    feas = np.ones((R, C), dtype=bool)
+                    gaps = self._gaps(j)
+                    for k in range(min(K, len(uge))):
+                        if not uge[k].any():
+                            continue
+                        starts, lens = runs[k]
+                        if int(lens.max()) == 0:
+                            continue
+                        g = gaps.get(k)
+                        if g is None:
+                            g = gaps[k] = _gap_rows(
+                                np.ascontiguousarray(uge[k], dtype=np.int32))
+                        _feas_gap_layer(g, starts, lens, R, C, feas)
+                self._account(per_bay, (i, o), feas)
+                per_bay[(i, o)] = (v1, feas, mx0, my0)
+                PROBE.on_scan_miss(j, i, o,
+                                   cached[0] if cached is not None else 0,
+                                   v1, _cold, 0.0, int(feas.sum()))
+                return feas, mx0, my0
+
         # 증분 경로
         if (self._incremental and cached is not None and R > 0 and C > 0
                 and cached[1].shape == (R, C)):
@@ -267,6 +420,34 @@ class Raster:
         C = self.W[j] - MW + 1
         if R <= 0 or C <= 0:
             return None, mx0, my0
+        # 행-prefix 카운트 (einsum과 정수 동일)
+        if self._morph:
+            runs = self._mask_runs(i, o)
+            if runs is not None:
+                if (self._incremental and cached is not None
+                        and cached[1].shape == (R, C)):
+                    A = self._affected_region(j, cached[0], v1, MH, MW, R, C)
+                    if A is None:
+                        total = cached[1]
+                        per_bay[(i, o)] = (v1, total, mx0, my0)
+                        return total, mx0, my0
+                uge = self.union_ge(j)
+                total = np.zeros((R, C), dtype=np.int32)
+                ps = self._psums(j)
+                for k in range(min(K, len(uge))):
+                    if not uge[k].any():
+                        continue
+                    starts, lens = runs[k]
+                    if int(lens.max()) == 0:
+                        continue
+                    P = ps.get(k)
+                    if P is None:
+                        P = ps[k] = _row_prefix(
+                            np.ascontiguousarray(uge[k], dtype=np.int32))
+                    _count_row_layer(P, starts, lens, R, C, total)
+                self._account(per_bay, (i, o), total)
+                per_bay[(i, o)] = (v1, total, mx0, my0)
+                return total, mx0, my0
         m32 = mask.astype(np.int32)
         if (self._incremental and cached is not None
                 and cached[1].shape == (R, C)):
