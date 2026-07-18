@@ -400,17 +400,3 @@ def nfp_rings_hybrid(A_parts: list, B_parts: list) -> list:
     except Exception:
         return []
     return geom_to_rings(u)
-
-
-def nfp_pieces(A_parts: list, B_parts: list) -> list:
-    """union 없는 볼록 조각 NFP (실험 경로)."""
-    if not A_parts or not B_parts:
-        return []
-    rings = []
-    for a in A_parts:
-        for b in B_parts:
-            b_neg = [(-x, -y) for (x, y) in b]
-            hull = _minkowski_convex_pure(a, b_neg)
-            if len(hull) >= 3:
-                rings.append({"ext": hull, "holes": []})
-    return rings

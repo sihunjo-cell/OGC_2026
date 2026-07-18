@@ -104,6 +104,7 @@ class Raster:
         self._runs = {}    # (i, o) -> [(starts, lens)]층별 | None(비단일 run 폴백)
         self._gap = {}     # j -> (ver, {k: gap})
         self._psum = {}    # j -> (ver, {k: row-prefix})
+        self._tfsat = {}   # j -> ((ver, tau), thickfree SAT) (두께항, lazy)
         # 증분 scan용 변경영역 로그 (규약 = ogc-code-invariants)
         self._incremental = incremental
         self._dirty = [[] for _ in range(self.n_bays)]
@@ -501,9 +502,34 @@ class Raster:
         self._field[j] = (self.ver[j], f)
         return f
 
+    def _thickfree_sat(self, j: int, tau: int):
+        """자유공간 두께 필드의 '두꺼운 자유칸(D>=τ/2)' SAT (lazy, scipy 부재 시 None)."""
+        if tau <= 0:
+            return None
+        key = (self.ver[j], tau)
+        cached = self._tfsat.get(j)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        try:
+            from scipy.ndimage import distance_transform_cdt
+        except Exception:                            # pragma: no cover
+            return None
+        H, W = self.H[j], self.W[j]
+        g = self.occ[j].get(0)
+        free = (g == 0) if g is not None else np.ones((H, W), dtype=bool)
+        # 벽=장애물 패딩 -> 벽접촉 자유칸도 얇게 (물리 두께)
+        padded = np.pad(free, 1, constant_values=False)
+        D = distance_transform_cdt(padded, metric="chessboard")[1:-1, 1:-1]
+        h = (tau + 1) // 2
+        tf = ((D >= h) & free).astype(np.int32)
+        sat = self.sat_of(tf)
+        self._tfsat[j] = (key, sat)
+        return sat
+
     def order_cells(self, j: int, i: int, o: int, feas, cap: int,
-                    futures=None, frag_w: float = 0.0):
-        """앵커를 접촉점수 내림차순 cap개로 (frag_w>0 = ΔF 페널티 결합, 공식은 invariants 원장)."""
+                    futures=None, frag_w: float = 0.0,
+                    thick_w: float = 0.0, thick_tau: int = 0):
+        """앵커를 접촉점수 내림차순 cap개로 (frag_w>0 = ΔF, thick_w>0 = 두께 페널티; invariants 원장)."""
         rs, cs = np.nonzero(feas)
         if rs.size == 0:
             return []
@@ -531,6 +557,21 @@ class Raster:
                 kill = (sat[r1, c1] - sat[r0, c1] - sat[r1, c0] + sat[r0, c0])
                 pen += kill.astype(np.float64) / (tot + 1.0)
             vals = vals - frag_w * pen
+        if thick_w > 0.0 and thick_tau > 0:
+            tf = self._thickfree_sat(j, thick_tau)
+            if tf is not None:
+                h = (thick_tau + 1) // 2
+                H, W = self.H[j], self.W[j]
+                # footprint [rs:rs+MH, cs:cs+MW]를 τ/2 halo로 확장한 창의 두꺼운-자유칸 수
+                # = 배치 시 τ 미만으로 파쇄되는 자유칸의 근사량 (반열린 창, 벽 클립)
+                r0 = np.clip(rs - h, 0, H)
+                r1 = np.clip(rs + MH + h, 0, H)
+                c0 = np.clip(cs - h, 0, W)
+                c1 = np.clip(cs + MW + h, 0, W)
+                pinch = (tf[r1, c1] - tf[r0, c1] - tf[r1, c0]
+                         + tf[r0, c0]).astype(np.float64)
+                denom = float((MH + 2 * h) * (MW + 2 * h))
+                vals = vals - thick_w * (pinch / denom)
         idx = np.lexsort((cs, rs, -vals))
         take = idx if cap is None else idx[:cap]
         return [(int(rs[t]), int(cs[t])) for t in take]
