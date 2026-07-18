@@ -59,7 +59,7 @@ def run(prob_path: str, cfg_index: int, wall_budget: float, out_path: str,
         with open(prob_path, "r", encoding="utf-8") as f:
             prob_info = json.load(f)
 
-        cfg = default_portfolio()[cfg_index]
+        cfg = default_portfolio(prob_info)[cfg_index]
         pre = _load_pre(pre_path, prob_info)
         alns_budget = None
         if deadline is None:

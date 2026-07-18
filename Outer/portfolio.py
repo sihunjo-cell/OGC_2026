@@ -23,22 +23,60 @@ from .floor import emergency_floor, LAST_FLOOR
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
-def default_portfolio() -> list:
+def _swap_floors(prob_info) -> bool:
+    """혼잡 중~대형 감지 (고-w3/소형은 False = floor 보존; 근거 = issue/07-cond)."""
+    if prob_info is None:
+        return False
+    try:
+        w = prob_info["weights"]
+        if w["w3"] / max(w["w1"], 1e-9) >= 0.10:
+            return False
+        B = prob_info["blocks"]
+        hz = max(b["due_date"] for b in B) - min(b["release_time"] for b in B)
+        ba = sum(b2["width"] * b2["height"] for b2 in prob_info["bays"])
+        au = 0.0
+        for b in B:
+            ring = b["shape"][0]["layers"][0]
+            s = 0.0
+            for i in range(len(ring)):
+                x0, y0 = ring[i]
+                x1, y1 = ring[(i + 1) % len(ring)]
+                s += x0 * y1 - x1 * y0
+            au += abs(s) * 0.5 * b["processing_time"]
+        return len(B) * (au / max(ba * hz, 1e-9)) >= 50.0
+    except Exception:
+        return False
+
+
+def default_portfolio(prob_info: dict = None) -> list:
     """4-워커 min-wins 포트폴리오: {κ3, κ1} x {dyn-on, dyn-off(floor)} -- 배선 근거는 메모리 원장."""
-    # hull-nestle: dyn-on 기본 (k32; cap/flop 재보정 2026-07-17 -- 근거 = wall-anatomy 원장)
+    # hull-nestle: κ3 = k32 유지(38 보호), κ1 = k64 재보정 (근거 = issue/06 후속 원장)
     nes = dict(dispatch_nestle_k=32, dispatch_nestle_cap=32,
                dispatch_nestle_flop_cap=2e10)
+    nes1 = dict(dispatch_nestle_k=64, dispatch_nestle_cap=64,
+                dispatch_nestle_flop_cap=2e11)
     # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
+    # slot[3] = κ1-off floor: 양 경우 유지 (1-플로어 보험; C4′ 대체는 기각 봉인 = issue/07-cond)
+    slot4 = OuterConfig(xi=0.5, seed=5,
+                        phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                            dispatch_dynamic_bay=False))
+    if _swap_floors(prob_info):
+        # 혼잡 중~대형: κ3-off floor -> C3′ = κ3-fd-k64 (min-wins 추가 열; W0=k32 유지가 38 봉인)
+        slot2 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
+                            phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
+                                                **fd, **nes1))
+    else:
+        slot2 = OuterConfig(xi=0.3, seed=1,
+                            phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
+                                                dispatch_dynamic_bay=False))               # κ3 floor
     return [
         OuterConfig(xi=0.3, seed=1, restart_stall=8,
                     phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, ΔF)
-        OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
-                                                        dispatch_dynamic_bay=False)),                  # κ3 dyn-off (floor)
+        slot2,
         OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24, **nes)),        # κ1 dyn-on
-        OuterConfig(xi=0.5, seed=5, phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                        dispatch_dynamic_bay=False)),                  # κ1 dyn-off (floor)
+                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24, **nes1)),       # κ1 dyn-on (k64)
+        slot4,
     ]
 
 
@@ -79,7 +117,7 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
                        configs: list = None, n_workers: int = 4,
                        deadline=None, deadline_s=None) -> dict:
     use_default = configs is None
-    configs = configs or default_portfolio()
+    configs = configs or default_portfolio(prob_info)
     n = len(configs)
     t0 = time.perf_counter()
 
