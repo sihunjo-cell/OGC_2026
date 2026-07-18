@@ -8,7 +8,7 @@ from typing import Optional
 
 from .config import DP_TOL, GEOM_MODE
 from .geometry import (simplify_layer, bounding_box, polygon_area,
-                       nfp_rings, nfp_pieces, nfp_rings_hybrid, convex_decompose)
+                       nfp_rings, nfp_rings_hybrid, convex_decompose)
 
 
 # -----------------------------------------------------------------------------
@@ -53,11 +53,6 @@ class NFPCache:
             A = self._layer(i, oi, k_i)
             B = self._layer(n, on, k_j)
             rings = nfp_rings(A, B) if (A is not None and B is not None) else []
-        elif self._mode == "pieces":
-            # 실험 전용 (목적함수 바뀔 수 있음)
-            A = self._decompose(i, oi, k_i)
-            B = self._decompose(n, on, k_j)
-            rings = nfp_pieces(A, B) if (A and B) else []
         else:  # fast: shapely 레퍼런스와 동일 ring
             A = self._decompose(i, oi, k_i)
             B = self._decompose(n, on, k_j)

@@ -51,6 +51,13 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     frag_cap = float(getattr(cfg, "fragdelta_flop_cap", 2e9))
     frag_dens = float(getattr(cfg, "fragdelta_dens_hi", 0.0) or 0.0)
     frag_flops, frag_alive = 0.0, True
+    # 두께 보존 항 (issue/03; κ1 열 전용, ΔF와 별 워커)
+    thick_w = float(getattr(cfg, "dispatch_thick", 0.0) or 0.0)
+    thick_tau = int(getattr(cfg, "thick_tau", 9) or 0)
+    thick_qhi = int(getattr(cfg, "thick_queue_hi", 1) or 1)
+    thick_dens = float(getattr(cfg, "thick_dens_hi", 0.0) or 0.0)
+    thick_cap = float(getattr(cfg, "thick_flop_cap", 2e9))
+    thick_flops, thick_alive = 0.0, True
 
     def _dens0(j):
         # bay j의 layer-0 점유밀도 (ΔF 형성기 게이트용)
@@ -171,7 +178,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     return True
         return False
 
-    def _try_admit(i, j, t, rank=0, earlier=0, futures=None):
+    def _try_admit(i, j, t, rank=0, earlier=0, futures=None, tw=0.0):
         # 마감 후 스캔 미진입
         if deadline is not None and time.perf_counter() >= deadline:
             return False
@@ -201,7 +208,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             if n_ok:
                 any_space = True
                 feas_anchors += n_ok
-            for (r, c) in raster.order_cells(j, i, o, allow, cap, futs, frag_w):
+            for (r, c) in raster.order_cells(j, i, o, allow, cap, futs, frag_w,
+                                             tw, thick_tau):
                 cells_tried += 1
                 pos = (int(c) - mx0, int(r) - my0)
                 if _exact_gate(i, j, o, pos, xt):
@@ -303,12 +311,26 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     futures.append((m, MHm, MWm, Raster.sat_of(allow_m), tot))
                 if not futures:
                     futures = None
+            # 두께항 게이트: 큐 임계 + 형성기(dens) + FLOP 캡 (P6 자동 셧오프)
+            tw = 0.0
+            if thick_w > 0.0 and thick_alive and len(queue[j]) >= thick_qhi \
+                    and (thick_dens <= 0.0 or _dens0(j) < thick_dens):
+                tfc = raster._tfsat.get(j)
+                if tfc is not None and tfc[0][0] == raster.ver[j]:
+                    tw = thick_w                         # 캐시 신선 = DT 재계산 0
+                else:
+                    proxy = float(raster.H[j]) * raster.W[j]
+                    if thick_flops + proxy > thick_cap:
+                        thick_alive = False
+                    else:
+                        thick_flops += proxy
+                        tw = thick_w
             _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
             _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
             for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
-                if _try_admit(i, j, t, _rank, _earlier, futures):
+                if _try_admit(i, j, t, _rank, _earlier, futures, tw):
                     _earlier += 1
                     _fails = 0
                     queue[j].remove(i)
