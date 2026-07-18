@@ -23,24 +23,6 @@ from .floor import emergency_floor, LAST_FLOOR
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
-def _thick_tau(prob_info) -> int:
-    """τ = 블록 최소두께(회전 min bbox 변) 중앙값 (근거 = issue/03 ev04)."""
-    import math
-    import statistics
-    thick = []
-    for b in prob_info["blocks"]:
-        tmin = 10 ** 9
-        for orient in b["shape"]:
-            xs = [v[0] for lay in orient["layers"] if lay for v in lay]
-            ys = [v[1] for lay in orient["layers"] if lay for v in lay]
-            if not xs:
-                continue
-            tmin = min(tmin, min(math.ceil(max(ys)) - math.floor(min(ys)),
-                                 math.ceil(max(xs)) - math.floor(min(xs))))
-        thick.append(tmin)
-    return int(statistics.median(thick)) if thick else 9
-
-
 def _swap_floors(prob_info) -> bool:
     """혼잡 중~대형 감지 (고-w3/소형은 False = floor 보존; 근거 = issue/07-cond)."""
     if prob_info is None:
@@ -80,12 +62,12 @@ def default_portfolio(prob_info: dict = None) -> list:
         slot2 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
                             phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
                                                 **fd, **nes1))
-        # κ1-off floor -> T4 = κ1-k64 + 두께항(형성기 δ0.55) (39 직격; 근거 = issue/03 Results 7)
+        # κ1-off floor -> T4 = κ1-k64 + near-main(형성기 δ0.55) (38/26/39 직격; issue/08 Results 2~5)
         slot4 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                dispatch_thick=40.0,
-                                                thick_tau=_thick_tau(prob_info),
-                                                thick_queue_hi=1, thick_dens_hi=0.55,
+                                                dispatch_nearmain_k=16,
+                                                dispatch_nearmain_cap=8,
+                                                dispatch_nearmain_dens_hi=0.55,
                                                 **nes1))
     else:
         slot2 = OuterConfig(xi=0.3, seed=1,

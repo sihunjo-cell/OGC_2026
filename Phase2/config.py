@@ -26,12 +26,11 @@ class Phase2Config:
     fragdelta_flop_cap: float = 2e9  # 디코드당 FLOP 상한 -- 초과 시 잔여 비활성
     # ΔF 형성기 게이트: bay 밀도 >= 값이면 항 비활성 (0 = 게이트 없음)
     fragdelta_dens_hi: float = 0.0
-    # 잔여-조각 두께 보존 항: 배치 시 자유공간을 τ 미만으로 파쇄하는 양 페널티 (0=off; issue/03)
-    dispatch_thick: float = 0.0     # 페널티 배율 (0 = 끔 = byte 동일)
-    thick_tau: int = 9              # 임계 두께 셀 (문제별 블록 최소두께 중앙값)
-    thick_queue_hi: int = 1         # bay 큐 임계 (이상일 때만 활성)
-    thick_dens_hi: float = 0.0      # 형성기 게이트: bay 밀도 >= 값이면 비활성 (0 = 게이트 없음)
-    thick_flop_cap: float = 2e9     # 디코드당 DT FLOP 상한 -- 초과 시 잔여 비활성 (P6 자동 셧오프)
+    # near-main 합류: 얕은-겹침(count<=K) 앵커를 main-pass 접촉-순위 경쟁에 합류 (0=off; issue/08)
+    dispatch_nearmain_k: int = 0
+    dispatch_nearmain_cap: int = 16       # 합류 시 추가 후보 예산
+    dispatch_nearmain_dens_hi: float = 0.0  # 형성기 게이트: bay 밀도 >= 값이면 비활성 (0=게이트 없음)
+    dispatch_nearmain_flop_cap: float = 2e10  # 디코드당 count FLOP 상한 (P6 자동 셧오프)
     # hull-nestle 회수: mask 전멸 시 count<=K 앵커 cap개 정밀 재검사 (0 = 끔; 배선값은 portfolio)
     dispatch_nestle_k: int = 0
     dispatch_nestle_cap: int = 32
