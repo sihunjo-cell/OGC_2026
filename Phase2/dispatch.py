@@ -82,6 +82,11 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     # 게이트 쌍판정 memo (판정-동치 -- 근거·한계는 issue/05 Results)
     gate_memo: dict = {}
     gate_omemo: dict = {}
+    order_hint = getattr(cfg, "dispatch_order_hint", None) or {}
+
+    def _order_key(i, t):
+        h = order_hint.get(i) if hasattr(order_hint, "get") else None
+        return (0, h, i) if h is not None else (1, -_prio(i, t), i)
 
     coords: dict = {}
     orient: dict = {}
@@ -304,7 +309,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     futures = None
             _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
             _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
-            for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
+            for _rank, i in enumerate(sorted(queue[j], key=lambda b: _order_key(b, t))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
                 if _try_admit(i, j, t, _rank, _earlier, futures):

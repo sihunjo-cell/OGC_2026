@@ -1,8 +1,8 @@
 """Outer.cyclex -- cycle-exchange proposals over bay assignments.
 
-This is a structural move for the bay-assignment layer. It proposes simultaneous
-bay cycles such as A->bay(B), B->bay(C), C->bay(A); the caller must still realize
-the proposed bay vector with Phase2 before accepting it.
+This is a structural move for the bay-assignment layer.  It proposes simultaneous
+bay cycles such as A->bay(B), B->bay(C), C->bay(A).  The proxy is used only to
+produce a short candidate list; ALNS evaluates those candidates with Phase2.
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import itertools
 import time
 
 from Phase1.common import eligible, footprint_area
+from .destroy import _normalizers, r_related
 from .objective import loads_from_bay, z2_raw
 
 
@@ -24,6 +25,10 @@ def _areas(pre):
 
 def _pref_loss(i, j, prefs, smax):
     return smax[i] - (prefs[i][j] if j < len(prefs[i]) else 0)
+
+
+def _time_overlap(entry, exit_, i, j):
+    return entry[i] < exit_[j] and entry[j] < exit_[i]
 
 
 def _crowd_score(i, j, prof, bays, est, proc, areas, cw, eta, w1):
@@ -45,25 +50,95 @@ def _crowd_score(i, j, prof, bays, est, proc, areas, cw, eta, w1):
     return (cw * w1 * over / wh) if over > 0.0 else 0.0
 
 
-def propose_cyclex(s, prob_info: dict, pre, cfg, rng=None, deadline=None):
-    """Return a proposed bay vector or None.
+def _candidate_nodes(s, prob_info, pre, cfg, ranks, prefs, due, areas):
+    """Build a bounded candidate set: tardy seeds + related occupants + pref-loss."""
+    n = len(ranks)
+    max_nodes = max(2, int(getattr(cfg, "cyclex_nodes", 24) or 24))
+    pref_nodes = max(0, int(getattr(cfg, "cyclex_pref_nodes", max_nodes // 4) or 0))
+    neighbor_k = max(0, int(getattr(cfg, "cyclex_neighbor_k", 3) or 0))
 
-    Candidate cycles are ranked by a cheap assignment proxy:
-    exact Z2 load delta + local preference/crowd deltas for moved blocks. The
-    proxy only chooses one candidate; the caller decides by exact realize().
+    by_cost = [i for *_rest, i in sorted(ranks, reverse=True)]
+    tard = [(max(0, s.exit_[i] - due[i]), ranks[i][0], i) for i in range(n)]
+    by_tard = [i for *_rest, i in sorted(tard, reverse=True)]
+    pref = [(_pref_loss(i, s.bay[i], prefs, pre.Smax), ranks[i][0], i) for i in range(n)]
+    by_pref = [i for *_rest, i in sorted(pref, reverse=True)]
+
+    nodes = []
+    seen = set()
+
+    def add(i):
+        if i not in seen and len(nodes) < max_nodes:
+            seen.add(i)
+            nodes.append(i)
+            return True
+        return False
+
+    seed_cap = max(2, min(max_nodes, (max_nodes + 1) // 2))
+    seeds = []
+    for i in by_tard:
+        if len(seeds) >= seed_cap:
+            break
+        if tard[i][0] > 0 or ranks[i][0] > 0:
+            seeds.append(i)
+            add(i)
+    for i in by_cost:
+        if len(seeds) >= seed_cap:
+            break
+        if i not in seeds:
+            seeds.append(i)
+            add(i)
+
+    for i in by_pref[:pref_nodes]:
+        add(i)
+
+    try:
+        norm = _normalizers(prob_info, pre)
+    except Exception:
+        norm = None
+    for seed in seeds:
+        if len(nodes) >= max_nodes:
+            break
+        overlap = [j for j in range(n)
+                   if j != seed and s.bay[j] != s.bay[seed]
+                   and _time_overlap(s.entry, s.exit_, seed, j)]
+        overlap.sort(key=lambda j: (abs(s.entry[seed] - s.entry[j]),
+                                    abs(areas[seed] - areas[j])))
+        for j in overlap[:neighbor_k]:
+            add(j)
+        if norm is not None and len(nodes) < max_nodes:
+            rel = [j for j in range(n) if j != seed and j not in seen]
+            rel.sort(key=lambda j: r_related(seed, j, s, cfg, pre, norm))
+            for j in rel[:neighbor_k]:
+                add(j)
+
+    for i in by_cost:
+        if len(nodes) >= max_nodes:
+            break
+        add(i)
+    return nodes, len(seeds)
+
+
+def propose_cyclex(s, prob_info: dict, pre, cfg, rng=None, deadline=None):
+    """Return ``(candidates, info)``.
+
+    ``candidates`` is sorted by proxy delta and contains dictionaries with:
+    ``bay``, ``proxy_delta``, and ``move_size``.  The caller should run exact
+    ``realize`` on each candidate and accept only actual objective improvement.
     """
+    info = {"candidate": 0, "checked": 0, "nodes": 0, "seeds": 0,
+            "move_size": 0, "proxy_delta": None, "n_candidates": 0}
     if deadline is not None and time.perf_counter() >= deadline:
-        return None
+        return [], info
 
     blocks = prob_info["blocks"]
     n = len(blocks)
     m = pre.n_bays
     if n < 2 or m < 2:
-        return None
+        return [], info
 
-    max_nodes = max(2, int(getattr(cfg, "cyclex_nodes", 24) or 24))
     max_cycles = max(1, int(getattr(cfg, "cyclex_max_cycles", 20000) or 20000))
     min_gain = float(getattr(cfg, "cyclex_min_proxy_gain", 0.0) or 0.0)
+    realize_k = max(1, int(getattr(cfg, "cyclex_realize_k", 4) or 4))
 
     weights = prob_info.get("weights", {})
     w1 = weights.get("w1", 1.0)
@@ -92,14 +167,16 @@ def propose_cyclex(s, prob_info: dict, pre, cfg, rng=None, deadline=None):
     cur_z2 = z2_raw(cur_loads, pre.u)
     local_cur = {}
 
-    rank = []
+    ranks = []
     for i in range(n):
         tard = max(0, s.exit_[i] - due[i])
         pref = _pref_loss(i, s.bay[i], prefs, pre.Smax)
-        rank.append((w1 * tard + w3 * pref, tard, areas[i], i))
-    nodes = [i for *_rest, i in sorted(rank, reverse=True)[:max_nodes]]
+        ranks.append((w1 * tard + w3 * pref, tard, areas[i], i))
+    nodes, n_seeds = _candidate_nodes(s, prob_info, pre, cfg, ranks, prefs, due, areas)
+    info["nodes"] = len(nodes)
+    info["seeds"] = n_seeds
     if len(nodes) < 2:
-        return None
+        return [], info
 
     def can_move(i, j):
         return j != s.bay[i] and eligible(pre, i, j)
@@ -118,20 +195,33 @@ def propose_cyclex(s, prob_info: dict, pre, cfg, rng=None, deadline=None):
             delta_local += local_score(i, j_new) - local_cur[i]
         return w2 * (z2_raw(new_loads, pre.u) - cur_z2) + delta_local
 
-    best_delta = -min_gain
-    best_map = None
+    top = []
+    seen_maps = set()
     checked = 0
+
+    def add_candidate(mapping, delta):
+        if delta is None or delta >= -min_gain:
+            return
+        key = tuple(sorted(mapping.items()))
+        if key in seen_maps:
+            return
+        seen_maps.add(key)
+        bay = list(s.bay)
+        for i, j in mapping.items():
+            bay[i] = j
+        top.append({"bay": bay, "proxy_delta": delta, "move_size": len(mapping)})
+        top.sort(key=lambda c: c["proxy_delta"])
+        if len(top) > realize_k:
+            top.pop()
 
     for a, b in itertools.combinations(nodes, 2):
         if deadline is not None and time.perf_counter() >= deadline:
             break
         if s.bay[a] == s.bay[b]:
             continue
-        d = eval_mapping({a: s.bay[b], b: s.bay[a]})
+        mp = {a: s.bay[b], b: s.bay[a]}
+        add_candidate(mp, eval_mapping(mp))
         checked += 1
-        if d is not None and d < best_delta:
-            best_delta = d
-            best_map = {a: s.bay[b], b: s.bay[a]}
         if checked >= max_cycles:
             break
 
@@ -148,19 +238,16 @@ def propose_cyclex(s, prob_info: dict, pre, cfg, rng=None, deadline=None):
             for mp in triples:
                 if len({s.bay[x] for x in mp}) < 2:
                     continue
-                d = eval_mapping(mp)
+                add_candidate(mp, eval_mapping(mp))
                 checked += 1
-                if d is not None and d < best_delta:
-                    best_delta = d
-                    best_map = dict(mp)
                 if checked >= max_cycles:
                     break
             if checked >= max_cycles:
                 break
 
-    if not best_map:
-        return None
-    bay = list(s.bay)
-    for i, j in best_map.items():
-        bay[i] = j
-    return bay
+    info["checked"] = checked
+    info["n_candidates"] = len(top)
+    if top:
+        info.update(candidate=1, move_size=top[0]["move_size"],
+                    proxy_delta=top[0]["proxy_delta"])
+    return top, info

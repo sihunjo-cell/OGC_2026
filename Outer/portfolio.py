@@ -31,8 +31,9 @@ def default_portfolio() -> list:
     # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
     cx = _cyclex_env()
+    ib = _inbay_env()
     return [
-        OuterConfig(xi=0.3, seed=1, restart_stall=8, **cx,
+        OuterConfig(xi=0.3, seed=1, restart_stall=8, **cx, **ib,
                     phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, ΔF)
         OuterConfig(xi=0.3, seed=1, phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
                                                         dispatch_dynamic_bay=False)),                  # κ3 dyn-off (floor)
@@ -44,7 +45,7 @@ def default_portfolio() -> list:
 
 
 def _cyclex_env() -> dict:
-    """Optional switch: OGC_CYCLEX=stall[,nodes[,max_cycles]]."""
+    """Optional switch: OGC_CYCLEX=stall[,nodes[,max_cycles[,realize_k]]]."""
     raw = os.environ.get("OGC_CYCLEX", "").strip()
     if not raw:
         return {}
@@ -59,6 +60,29 @@ def _cyclex_env() -> dict:
             cfg["cyclex_nodes"] = max(2, int(float(parts[1])))
         if len(parts) > 2 and parts[2]:
             cfg["cyclex_max_cycles"] = max(1, int(float(parts[2])))
+        if len(parts) > 3 and parts[3]:
+            cfg["cyclex_realize_k"] = max(1, int(float(parts[3])))
+    except Exception:
+        pass
+    return cfg
+def _inbay_env() -> dict:
+    """Optional switch: OGC_INBAY=stall[,realize_k[,bays[,top]]]."""
+    raw = os.environ.get("OGC_INBAY", "").strip()
+    if not raw:
+        return {}
+    cfg = {"inbay_stall": 8, "inbay_realize_k": 4, "inbay_bays": 2, "inbay_top": 10}
+    if raw in {"1", "true", "TRUE", "on", "ON", "yes", "YES"}:
+        return cfg
+    try:
+        parts = [p.strip() for p in raw.split(",")]
+        if len(parts) > 0 and parts[0]:
+            cfg["inbay_stall"] = max(1, int(float(parts[0])))
+        if len(parts) > 1 and parts[1]:
+            cfg["inbay_realize_k"] = max(1, int(float(parts[1])))
+        if len(parts) > 2 and parts[2]:
+            cfg["inbay_bays"] = max(1, int(float(parts[2])))
+        if len(parts) > 3 and parts[3]:
+            cfg["inbay_top"] = max(2, int(float(parts[3])))
     except Exception:
         pass
     return cfg
