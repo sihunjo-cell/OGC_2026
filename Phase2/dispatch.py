@@ -51,14 +51,6 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     frag_cap = float(getattr(cfg, "fragdelta_flop_cap", 2e9))
     frag_dens = float(getattr(cfg, "fragdelta_dens_hi", 0.0) or 0.0)
     frag_flops, frag_alive = 0.0, True
-    # 두께 보존 항 (issue/03; κ1 열 전용, ΔF와 별 워커)
-    thick_w = float(getattr(cfg, "dispatch_thick", 0.0) or 0.0)
-    thick_tau = int(getattr(cfg, "thick_tau", 9) or 0)
-    thick_qhi = int(getattr(cfg, "thick_queue_hi", 1) or 1)
-    thick_dens = float(getattr(cfg, "thick_dens_hi", 0.0) or 0.0)
-    thick_cap = float(getattr(cfg, "thick_flop_cap", 2e9))
-    thick_flops, thick_alive = 0.0, True
-
     def _dens0(j):
         # bay j의 layer-0 점유밀도 (ΔF 형성기 게이트용)
         g = raster.occ[j].get(0)
@@ -70,14 +62,22 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     nes_cap = int(getattr(cfg, "dispatch_nestle_cap", 12) or 0)
     nes_flop_cap = float(getattr(cfg, "dispatch_nestle_flop_cap", 2e9))
     nes_flops, nes_alive = 0.0, True
+    # near-main 합류: 얕은-겹침 앵커를 main-pass 접촉-순위 경쟁에 (issue/08)
+    nm_k = int(getattr(cfg, "dispatch_nearmain_k", 0) or 0)
+    nm_cap = int(getattr(cfg, "dispatch_nearmain_cap", 16) or 0)
+    nm_dens = float(getattr(cfg, "dispatch_nearmain_dens_hi", 0.0) or 0.0)
+    nm_flop_cap = float(getattr(cfg, "dispatch_nearmain_flop_cap", 2e10))
+    nm_flops, nm_alive = 0.0, True
+    # 결정-플립 (형제 궤적 재시작용)
+    flip_call = int(getattr(cfg, "dispatch_flip_call", 0) or 0)
+    oc_n = 0
     nes_space = None
-    if nes_k > 0:
+    if nes_k > 0 or nm_k > 0:
         from .nestle import ExactSpace
         nes_space = ExactSpace(pre, fast=bool(
             getattr(cfg, "dispatch_nestle_fast", True)))
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
-    abar = (sum(amin) / n) if n else 1.0
     # 라우팅용 bay별 점유/용량 추적
     bay_area = bay_occ = None
     if dyn_bay:
@@ -86,7 +86,6 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     for j in range(pre.n_bays)]
         bay_occ = [0.0] * pre.n_bays
     kappa = max(1e-9, float(cfg.atc_kappa))
-    alpha = float(cfg.atc_alpha)
     # 게이트 쌍판정 memo (판정-동치 -- 근거·한계는 issue/05 Results)
     gate_memo: dict = {}
     gate_omemo: dict = {}
@@ -100,11 +99,16 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     forced_cons: set = set()
 
     def _prio(i, t):
-        # ATC: 1/((anorm^alpha)*P) * exp(-max(0, slack)/(kappa*pbar))
-        anorm = (amin[i] / abar) if abar > 0 else 1.0
+        # ATC: 1/P * exp(-max(0, slack)/(kappa*pbar))
         slack = D[i] - P[i] - t
-        return (1.0 / ((anorm ** alpha) * max(1, P[i]))) \
-            * math.exp(-max(0.0, slack) / (kappa * pbar))
+        return (1.0 / max(1, P[i])) * math.exp(-max(0.0, slack) / (kappa * pbar))
+
+    # in-bay 순서 힌트: hint 있는 블록을 release tick 내 먼저 admit (None=순수 ATC=동일)
+    order_hint = getattr(cfg, "dispatch_order_hint", None) or {}
+
+    def _order_key(i, t):
+        h = order_hint.get(i) if hasattr(order_hint, "get") else None
+        return (0, h, i) if h is not None else (1, -_prio(i, t), i)
 
     def _exact_gate(i, j, o, pos, xt):
         # 시간축 crane 검사(역방향+내 exit). 경계 규칙은 메모리 ogc-code-invariants 참조.
@@ -178,7 +182,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     return True
         return False
 
-    def _try_admit(i, j, t, rank=0, earlier=0, futures=None, tw=0.0):
+    def _try_admit(i, j, t, rank=0, earlier=0, futures=None):
+        nonlocal nm_flops, nm_alive, oc_n
         # 마감 후 스캔 미진입
         if deadline is not None and time.perf_counter() >= deadline:
             return False
@@ -208,10 +213,45 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             if n_ok:
                 any_space = True
                 feas_anchors += n_ok
-            for (r, c) in raster.order_cells(j, i, o, allow, cap, futs, frag_w,
-                                             tw, thick_tau):
+            # near-main: 얕은-겹침 후보를 같은 접촉-순위에 합류 (near 후보만 exact 검사)
+            grid, budget, near = allow, cap, None
+            if nm_k > 0 and nm_alive \
+                    and (nm_dens <= 0.0 or _dens0(j) < nm_dens):
+                _cs = raster._cscan.get(j, {}).get((i, o))
+                if _cs is None or _cs[0] != raster.ver[j]:
+                    _mk, _, _ = raster.mask(i, o)
+                    _Kq, _MHq, _MWq = _mk.shape
+                    proxy = (float(max(raster.H[j] - _MHq + 1, 0))
+                             * max(raster.W[j] - _MWq + 1, 0) * _MHq * _MWq * _Kq)
+                    if nm_flops + proxy > nm_flop_cap:
+                        nm_alive = False
+                    else:
+                        nm_flops += proxy
+                if nm_alive:
+                    total, _, _ = raster.count_scan(j, i, o)
+                    if total is not None:
+                        near = np.zeros_like(allow)
+                        _sub = total[r_lo:r_hi + 1, c_lo:c_hi + 1]
+                        near[r_lo:r_hi + 1, c_lo:c_hi + 1] = \
+                            (_sub > 0) & (_sub <= nm_k)
+                        if near.any():
+                            grid = allow | near
+                            budget = cap + nm_cap
+                        else:
+                            near = None
+            cells = raster.order_cells(j, i, o, grid, budget, futs, frag_w)
+            if cells:
+                oc_n += 1
+                if oc_n == flip_call and len(cells) > 1:
+                    cells = cells[1:] + cells[:1]
+            for (r, c) in cells:
                 cells_tried += 1
                 pos = (int(c) - mx0, int(r) - my0)
+                if near is not None and not allow[r, c]:
+                    if not nes_space.space_ok(j, raster.ver[j], i, o, pos,
+                                              placed[j], coords, orient):
+                        gate_rej += 1
+                        continue
                 if _exact_gate(i, j, o, pos, xt):
                     coords[i] = pos
                     orient[i] = o
@@ -311,26 +351,12 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     futures.append((m, MHm, MWm, Raster.sat_of(allow_m), tot))
                 if not futures:
                     futures = None
-            # 두께항 게이트: 큐 임계 + 형성기(dens) + FLOP 캡 (P6 자동 셧오프)
-            tw = 0.0
-            if thick_w > 0.0 and thick_alive and len(queue[j]) >= thick_qhi \
-                    and (thick_dens <= 0.0 or _dens0(j) < thick_dens):
-                tfc = raster._tfsat.get(j)
-                if tfc is not None and tfc[0][0] == raster.ver[j]:
-                    tw = thick_w                         # 캐시 신선 = DT 재계산 0
-                else:
-                    proxy = float(raster.H[j]) * raster.W[j]
-                    if thick_flops + proxy > thick_cap:
-                        thick_alive = False
-                    else:
-                        thick_flops += proxy
-                        tw = thick_w
             _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
             _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
-            for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
+            for _rank, i in enumerate(sorted(queue[j], key=lambda b: _order_key(b, t))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
-                if _try_admit(i, j, t, _rank, _earlier, futures, tw):
+                if _try_admit(i, j, t, _rank, _earlier, futures):
                     _earlier += 1
                     _fails = 0
                     queue[j].remove(i)

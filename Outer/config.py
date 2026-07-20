@@ -37,6 +37,12 @@ class OuterConfig:
 
     # -- 정체 재시작 --
     restart_stall: int = 0             # N회 연속 best 미갱신 시 κ-지터 재시작 (0=끔)
+    restart_flip: int = 0              # 1 = 재시작을 결정-플립(형제 궤적)으로 (0=κ-지터)
+    # -- 인베이 순서(inbay) 정체-프로브: dispatch 큐 순서 perturbation (0=끔, realize 실검증) --
+    inbay_stall: int = 0
+    inbay_realize_k: int = 4
+    inbay_bays: int = 2
+    inbay_top: int = 10
 
     # -- 기타 ------------------------------------------------------------------
     seed: int = 0

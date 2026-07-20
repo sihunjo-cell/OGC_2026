@@ -23,24 +23,6 @@ from .floor import emergency_floor, LAST_FLOOR
 _WORKER = str(pathlib.Path(__file__).resolve().parent / "worker.py")
 
 
-def _thick_tau(prob_info) -> int:
-    """τ = 블록 최소두께(회전 min bbox 변) 중앙값 (근거 = issue/03 ev04)."""
-    import math
-    import statistics
-    thick = []
-    for b in prob_info["blocks"]:
-        tmin = 10 ** 9
-        for orient in b["shape"]:
-            xs = [v[0] for lay in orient["layers"] if lay for v in lay]
-            ys = [v[1] for lay in orient["layers"] if lay for v in lay]
-            if not xs:
-                continue
-            tmin = min(tmin, min(math.ceil(max(ys)) - math.floor(min(ys)),
-                                 math.ceil(max(xs)) - math.floor(min(xs))))
-        thick.append(tmin)
-    return int(statistics.median(thick)) if thick else 9
-
-
 def _swap_floors(prob_info) -> bool:
     """혼잡 중~대형 감지 (고-w3/소형은 False = floor 보존; 근거 = issue/07-cond)."""
     if prob_info is None:
@@ -76,16 +58,23 @@ def default_portfolio(prob_info: dict = None) -> list:
     # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
     if _swap_floors(prob_info):
-        # 혼잡 중~대형: κ3-off floor -> C3′ = κ3-fd-k64 (min-wins 추가 열; W0=k32 유지가 38 봉인)
-        slot2 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
-                            phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
-                                                **fd, **nes1))
-        # κ1-off floor -> T4 = κ1-k64 + 두께항(형성기 δ0.55) (39 직격; 근거 = issue/03 Results 7)
+        # κ3-off floor -> κ1-k64 + near-main(K32/cap16) = 26 직격 (T900 8.63M; seed5 = 검증 최저)
+        slot2 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
+                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                                dispatch_nearmain_k=32,
+                                                dispatch_nearmain_cap=16,
+                                                dispatch_nearmain_dens_hi=0.55,
+                                                **nes1))
+        # κ1-off floor -> T4 = κ1-k64 + near-main(K16/cap8) = 38 봉인(K32는 38 +897k 회귀)
         slot4 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                dispatch_thick=40.0,
-                                                thick_tau=_thick_tau(prob_info),
-                                                thick_queue_hi=1, thick_dens_hi=0.55,
+                                                dispatch_nearmain_k=16,
+                                                dispatch_nearmain_cap=8,
+                                                dispatch_nearmain_dens_hi=0.55,
+                                                **nes1))
+        # W2 = κ1-k64 + 결정-플립 재시작(stall6) + inbay 순서-프로브 -- 27직격·28/31 순서축(−7.7/−2.3% 2seed)
+        slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=6, restart_flip=1, inbay_stall=4,
+                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 **nes1))
     else:
         slot2 = OuterConfig(xi=0.3, seed=1,
@@ -94,12 +83,14 @@ def default_portfolio(prob_info: dict = None) -> list:
         slot4 = OuterConfig(xi=0.5, seed=5,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 dispatch_dynamic_bay=False))               # κ1 floor
+        slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
+                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                                **nes1))                                    # κ1 dyn-on (k64)
     return [
         OuterConfig(xi=0.3, seed=1, restart_stall=8,
                     phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, ΔF)
         slot2,
-        OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                    phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24, **nes1)),       # κ1 dyn-on (k64)
+        slot3,
         slot4,
     ]
 
@@ -279,6 +270,35 @@ def optimize_portfolio(prob_info: dict, time_limit: float,
         if deadline is not None
         else time.perf_counter() + worker_wall + _wrapup_margin(time_limit)
     )
+    # subprocess 건강성 조기 감지: 워커가 결과를 못 내면(샌드박스 IPC 실패) in-process ALNS 폴백
+    # (warm-only near-last 방지). 정상 subprocess면 첫 best가 곧 나와 무발동 = 기존 경로 동일.
+    if worker_wall >= 90.0:
+        _hb = time.perf_counter() + 60.0
+        if deadline is not None:
+            _hb = min(_hb, deadline - 5.0)
+        _saw = False
+        while time.perf_counter() < _hb:
+            if any(os.path.exists(op) and os.path.getsize(op) > 2 for _, op in procs):
+                _saw = True
+                break
+            time.sleep(1.0)
+        if not _saw:
+            for p, _ in procs:
+                try:
+                    p.kill()
+                except Exception:
+                    pass
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            _rem = ((deadline - time.perf_counter()) if deadline is not None
+                    else worker_wall - 60.0)
+            if _rem > 3.0:
+                _o, _s = _run_single(prob_info, _rem, configs[0], pre,
+                                     deadline=deadline, deadline_s=deadline_s)
+                _cands = [(warm_obj, warm_sol)]
+                if _s is not None:
+                    _cands.append((_o, _s))
+                return _best_fallback(min(_cands, key=lambda r: r[0])[1])
+            return _best_fallback(warm_sol)
     for p, _ in procs:
         remaining = wait_deadline - time.perf_counter()
         try:
