@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import time
+from collections import OrderedDict
 from random import Random
 
 from Phase1 import BuildBayAssignment
@@ -15,6 +16,24 @@ from .destroy import destroy
 from .operators import AOS
 from .realize import realize
 from .repair import repair
+
+
+def _freeze_sig(value):
+    """Return a stable, hashable signature for config values used by realize()."""
+    if dataclasses.is_dataclass(value):
+        return tuple((f.name, _freeze_sig(getattr(value, f.name)))
+                     for f in dataclasses.fields(value))
+    if isinstance(value, dict):
+        return tuple(sorted((_freeze_sig(k), _freeze_sig(v)) for k, v in value.items()))
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_sig(v) for v in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_sig(v) for v in value))
+    return value
+
+
+def _realize_key(bay, phase2cfg):
+    return tuple(bay), _freeze_sig(phase2cfg)
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
@@ -29,7 +48,42 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         t0 = start
     budget_deadline = None if budget_s is None else (start + budget_s)
 
-    s = realize(p1.bay, prob_info, pre, cfg.phase2, deadline=deadline)
+    cache_limit = max(0, int(getattr(cfg, "realize_cache_size", 0) or 0))
+    realize_cache = OrderedDict()
+    cache_stats = {
+        "realize_cache_hits": 0,
+        "realize_cache_misses": 0,
+        "realize_cache_evictions": 0,
+        "realize_cache_saved_s": 0.0,
+    }
+
+    def _deadline_expired():
+        return deadline is not None and time.perf_counter() >= deadline
+
+    def _realize_cached(bay, phase2cfg):
+        if cache_limit <= 0 or _deadline_expired():
+            return realize(bay, prob_info, pre, phase2cfg, deadline=deadline)
+        key = _realize_key(bay, phase2cfg)
+        cached = realize_cache.get(key)
+        if cached is not None:
+            sol, elapsed = cached
+            realize_cache.move_to_end(key)
+            cache_stats["realize_cache_hits"] += 1
+            cache_stats["realize_cache_saved_s"] += elapsed
+            return sol
+
+        cache_stats["realize_cache_misses"] += 1
+        t_realize = time.perf_counter()
+        sol = realize(bay, prob_info, pre, phase2cfg, deadline=deadline)
+        elapsed = time.perf_counter() - t_realize
+        if not _deadline_expired():
+            if len(realize_cache) >= cache_limit:
+                realize_cache.popitem(last=False)
+                cache_stats["realize_cache_evictions"] += 1
+            realize_cache[key] = (sol, elapsed)
+        return sol
+
+    s = _realize_cached(p1.bay, cfg.phase2)
     s_best = s
 
     # 증분 best 방출 (>=3s 스로틀)
@@ -95,7 +149,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         if budget_deadline is not None and now >= budget_deadline:
             break
 
-        s2 = realize(bay2, prob_info, pre, cfg.phase2, deadline=deadline)
+        s2 = _realize_cached(bay2, cfg.phase2)
 
         accepted = accept(s2.objective, s.objective, T, rng)
         aos.score_update(s2, s, s_best, op_rem, op_ins, accepted)
@@ -116,7 +170,7 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
                 and not (deadline is not None and time.perf_counter() >= deadline)):
             jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))
             p2j = dataclasses.replace(cfg.phase2, atc_kappa=jk)
-            sj = realize(p1.bay, prob_info, pre, p2j, deadline=deadline)
+            sj = _realize_cached(p1.bay, p2j)
             if sj.feasible:
                 s = sj
                 if sj.objective < s_best.objective:
@@ -139,4 +193,6 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     stats["iters"] = it
     stats["f_best"] = s_best.objective
     stats["elapsed_s"] = time.perf_counter() - start
+    stats.update(cache_stats)
+    stats["realize_cache_size"] = len(realize_cache)
     return s_best, stats

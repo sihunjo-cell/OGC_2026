@@ -38,6 +38,9 @@ class OuterConfig:
     # -- 정체 재시작 --
     restart_stall: int = 0             # N회 연속 best 미갱신 시 κ-지터 재시작 (0=끔)
 
+    # -- realize cache ---------------------------------------------------------
+    realize_cache_size: int = 64        # LRU cache for repeated (bay assignment, Phase2 config) realization (0=off)
+
     # -- 기타 ------------------------------------------------------------------
     seed: int = 0
     phase1: object = None                            # 초기해용 Phase1Config (None이면 기본값)
