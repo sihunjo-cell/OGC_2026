@@ -68,6 +68,9 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     nm_dens = float(getattr(cfg, "dispatch_nearmain_dens_hi", 0.0) or 0.0)
     nm_flop_cap = float(getattr(cfg, "dispatch_nearmain_flop_cap", 2e10))
     nm_flops, nm_alive = 0.0, True
+    # 결정-플립 (형제 궤적 재시작용)
+    flip_call = int(getattr(cfg, "dispatch_flip_call", 0) or 0)
+    oc_n = 0
     nes_space = None
     if nes_k > 0 or nm_k > 0:
         from .nestle import ExactSpace
@@ -75,7 +78,6 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             getattr(cfg, "dispatch_nestle_fast", True)))
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
-    abar = (sum(amin) / n) if n else 1.0
     # 라우팅용 bay별 점유/용량 추적
     bay_area = bay_occ = None
     if dyn_bay:
@@ -84,7 +86,6 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     for j in range(pre.n_bays)]
         bay_occ = [0.0] * pre.n_bays
     kappa = max(1e-9, float(cfg.atc_kappa))
-    alpha = float(cfg.atc_alpha)
     # 게이트 쌍판정 memo (판정-동치 -- 근거·한계는 issue/05 Results)
     gate_memo: dict = {}
     gate_omemo: dict = {}
@@ -98,11 +99,16 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     forced_cons: set = set()
 
     def _prio(i, t):
-        # ATC: 1/((anorm^alpha)*P) * exp(-max(0, slack)/(kappa*pbar))
-        anorm = (amin[i] / abar) if abar > 0 else 1.0
+        # ATC: 1/P * exp(-max(0, slack)/(kappa*pbar))
         slack = D[i] - P[i] - t
-        return (1.0 / ((anorm ** alpha) * max(1, P[i]))) \
-            * math.exp(-max(0.0, slack) / (kappa * pbar))
+        return (1.0 / max(1, P[i])) * math.exp(-max(0.0, slack) / (kappa * pbar))
+
+    # in-bay 순서 힌트: hint 있는 블록을 release tick 내 먼저 admit (None=순수 ATC=동일)
+    order_hint = getattr(cfg, "dispatch_order_hint", None) or {}
+
+    def _order_key(i, t):
+        h = order_hint.get(i) if hasattr(order_hint, "get") else None
+        return (0, h, i) if h is not None else (1, -_prio(i, t), i)
 
     def _exact_gate(i, j, o, pos, xt):
         # 시간축 crane 검사(역방향+내 exit). 경계 규칙은 메모리 ogc-code-invariants 참조.
@@ -177,7 +183,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         return False
 
     def _try_admit(i, j, t, rank=0, earlier=0, futures=None):
-        nonlocal nm_flops, nm_alive
+        nonlocal nm_flops, nm_alive, oc_n
         # 마감 후 스캔 미진입
         if deadline is not None and time.perf_counter() >= deadline:
             return False
@@ -233,7 +239,12 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                             budget = cap + nm_cap
                         else:
                             near = None
-            for (r, c) in raster.order_cells(j, i, o, grid, budget, futs, frag_w):
+            cells = raster.order_cells(j, i, o, grid, budget, futs, frag_w)
+            if cells:
+                oc_n += 1
+                if oc_n == flip_call and len(cells) > 1:
+                    cells = cells[1:] + cells[:1]
+            for (r, c) in cells:
                 cells_tried += 1
                 pos = (int(c) - mx0, int(r) - my0)
                 if near is not None and not allow[r, c]:
@@ -342,7 +353,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     futures = None
             _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
             _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
-            for _rank, i in enumerate(sorted(queue[j], key=lambda b: (-_prio(b, t), b))):
+            for _rank, i in enumerate(sorted(queue[j], key=lambda b: _order_key(b, t))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
                 if _try_admit(i, j, t, _rank, _earlier, futures):

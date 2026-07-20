@@ -9,7 +9,6 @@ from dataclasses import dataclass
 class Phase2Config:
     # -- 이벤트 구동 ATC 디스패처 (Phase2.dispatch) ---------------------------
     atc_kappa: float = 2.0          # ATC 여유 감쇠 (포트폴리오 워커별 로터리)
-    atc_alpha: float = 0.0          # 0 = 순수 ATC (면적 항 끔)
     dispatch_cand_cap: int = 12     # (bay, orient)당 정확 게이트에 넘길 셀 수
     dispatch_cand_cap_hi: int = 48  # 큐 길이 >= queue_hi면 확대
     dispatch_queue_hi: int = 20
@@ -26,7 +25,9 @@ class Phase2Config:
     fragdelta_flop_cap: float = 2e9  # 디코드당 FLOP 상한 -- 초과 시 잔여 비활성
     # ΔF 형성기 게이트: bay 밀도 >= 값이면 항 비활성 (0 = 게이트 없음)
     fragdelta_dens_hi: float = 0.0
-    # near-main 합류: 얕은-겹침(count<=K) 앵커를 main-pass 접촉-순위 경쟁에 합류 (0=off; issue/08)
+    # 결정-플립: k번째 anchor-선택의 순위 회전(형제 궤적) -- 재시작 다양화용 (0=off)
+    dispatch_flip_call: int = 0
+    # near-main 합류: 얕은-겹침(count<=K) 앵커를 main-pass 접촉-순위 경쟁에 합류 (0=off)
     dispatch_nearmain_k: int = 0
     dispatch_nearmain_cap: int = 16       # 합류 시 추가 후보 예산
     dispatch_nearmain_dens_hi: float = 0.0  # 형성기 게이트: bay 밀도 >= 값이면 비활성 (0=게이트 없음)
@@ -36,6 +37,7 @@ class Phase2Config:
     dispatch_nestle_cap: int = 32
     dispatch_nestle_fast: bool = True    # 판정-동치 numba 가속 (False = 순수 shapely)
     dispatch_nestle_flop_cap: float = 2e10  # 디코드당 FLOP 상한 (fragdelta 캡과 동형)
+    dispatch_order_hint: object = None  # {block_id: priority_rank} in-bay 순서 프로브용 (None=ATC 순수)
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2
     force_retry_phase_b: bool = True    # force_place 전 부분점유 슬롯 재시도

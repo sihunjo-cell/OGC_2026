@@ -15,6 +15,7 @@ from .destroy import destroy
 from .operators import AOS
 from .realize import realize
 from .repair import repair
+from .inbay import propose_inbay
 
 
 def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, log=None,
@@ -57,6 +58,8 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
         "accepted": 0,
         "improved": 0,
         "restarts": 0,
+        "inbay": 0, "inbay_realized": 0, "inbay_improved": 0,
+        "inbay_real_best": None, "inbay_time_s": 0.0,
         "f0": s.objective,
         "f_best": s_best.objective,
         "elapsed_s": 0.0,
@@ -67,7 +70,9 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
     }
     # 정체 재시작 (κ-지터, s_best 유지)
     restart_stall = int(getattr(cfg, "restart_stall", 0) or 0)
+    inbay_stall = int(getattr(cfg, "inbay_stall", 0) or 0)
     since_best = 0
+    since_inbay = 0
     base_kappa = float(cfg.phase2.atc_kappa) if cfg.phase2 is not None else 2.0
 
     it = 0
@@ -107,16 +112,59 @@ def alns(prob_info: dict, pre, budget_s: float = None, cfg: OuterConfig = None, 
             stats["improved"] += 1
             stats["best_events"].append([time.perf_counter() - t0, s2.objective])
             since_best = 0
+            since_inbay = 0
             _emit_best(s_best)
         else:
             since_best += 1
+            since_inbay += 1
 
-        # 정체 재시작 (마감 후 미진입)
+        # 인베이(inbay) 순서 프로브: bay 배정 불변, dispatch 큐 순서만 perturbation
+        if (inbay_stall and since_inbay >= inbay_stall and cfg.phase2 is not None
+                and not (deadline is not None and time.perf_counter() >= deadline)):
+            t_ib = time.perf_counter()
+            cands_ib = propose_inbay(s_best, prob_info, pre, cfg)
+            stats["inbay"] += 1
+            since_inbay = 0
+            best_ib = None
+            best_ib_delta = None
+            before_obj = s_best.objective
+            for cand in cands_ib:
+                if deadline is not None and time.perf_counter() >= deadline:
+                    break
+                p2i = dataclasses.replace(cfg.phase2, dispatch_order_hint=cand["hint"])
+                si = realize(s_best.bay, prob_info, pre, p2i, deadline=deadline)
+                stats["inbay_realized"] += 1
+                rd = si.objective - before_obj
+                if stats["inbay_real_best"] is None or rd < stats["inbay_real_best"]:
+                    stats["inbay_real_best"] = rd
+                if best_ib_delta is None or rd < best_ib_delta:
+                    best_ib_delta = rd
+                    best_ib = si
+            if best_ib is not None and best_ib_delta is not None and best_ib_delta < 0:
+                s = best_ib
+                s_best = best_ib
+                stats["accepted"] += 1
+                stats["improved"] += 1
+                stats["inbay_improved"] += 1
+                stats["best_events"].append([time.perf_counter() - t0, best_ib.objective])
+                since_best = 0
+                since_inbay = 0
+                _emit_best(s_best)
+            stats["inbay_time_s"] += time.perf_counter() - t_ib
+
+        # 정체 재시작 (마감 후 미진입; flip = 결정-공간, 기본 = κ-지터)
         if (restart_stall and since_best >= restart_stall and cfg.phase2 is not None
                 and not (deadline is not None and time.perf_counter() >= deadline)):
-            jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))
-            p2j = dataclasses.replace(cfg.phase2, atc_kappa=jk)
-            sj = realize(p1.bay, prob_info, pre, p2j, deadline=deadline)
+            if int(getattr(cfg, "restart_flip", 0) or 0):
+                bay_r = p1.bay
+                p2_r = dataclasses.replace(
+                    cfg.phase2,
+                    dispatch_flip_call=rng.randint(1, len(prob_info["blocks"])))
+            else:
+                bay_r = p1.bay
+                jk = min(6.0, max(0.3, base_kappa * rng.choice((0.4, 0.6, 1.5, 2.5))))
+                p2_r = dataclasses.replace(cfg.phase2, atc_kappa=jk)
+            sj = realize(bay_r, prob_info, pre, p2_r, deadline=deadline)
             if sj.feasible:
                 s = sj
                 if sj.objective < s_best.objective:
