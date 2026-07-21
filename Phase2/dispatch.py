@@ -70,6 +70,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     nm_flops, nm_alive = 0.0, True
     # 결정-플립 (형제 궤적 재시작용)
     flip_call = int(getattr(cfg, "dispatch_flip_call", 0) or 0)
+    # orient-합동 순위 (전 orientation 후보 접촉점수 병합 -> 전역 순위 admit)
+    orient_joint = bool(getattr(cfg, "dispatch_orient_joint", False))
     oc_n = 0
     nes_space = None
     if nes_k > 0 or nm_k > 0:
@@ -194,6 +196,8 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         futs = None
         if futures:
             futs = [f for f in futures if f[0] != i] or None
+        if orient_joint and len(pre.poly[i]) > 1:
+            return _admit_joint(i, j, t, xt, cap, futs, rank, earlier)
         any_space = False
         feas_anchors = cells_tried = gate_rej = 0
         for o in range(len(pre.poly[i])):
@@ -264,6 +268,106 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     return True
                 gate_rej += 1
         # hull-nestle 회수: mask 패스 전멸 시에만
+        if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
+            PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
+                             feas_anchors, cells_tried, gate_rej)
+            return True
+        PROBE.on_attempt(t, j, i, rank, earlier,
+                         "gate_fail" if any_space else "no_space",
+                         feas_anchors, cells_tried, gate_rej)
+        return False
+
+    def _admit_joint(i, j, t, xt, cap, futs, rank, earlier):
+        """orient-합동 순위: 전 orientation 후보를 접촉점수로 병합해 전역 순위로 admit.
+        placement마다 동일 _exact_gate/space_ok 통과 = soundness 불변, 순서만 병합."""
+        nonlocal nm_flops, nm_alive, oc_n
+        pool = []
+        meta = {}
+        any_space = False
+        feas_anchors = 0
+        for o in range(len(pre.poly[i])):
+            (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
+            if x_lo > x_hi or y_lo > y_hi:
+                continue
+            feas, mx0, my0 = raster.scan(j, i, o)
+            if feas.size == 0:
+                continue
+            r_lo, r_hi = max(0, y_lo + my0), min(feas.shape[0] - 1, y_hi + my0)
+            c_lo, c_hi = max(0, x_lo + mx0), min(feas.shape[1] - 1, x_hi + mx0)
+            if r_lo > r_hi or c_lo > c_hi:
+                continue
+            allow = np.zeros_like(feas)
+            allow[r_lo:r_hi + 1, c_lo:c_hi + 1] = feas[r_lo:r_hi + 1, c_lo:c_hi + 1]
+            n_ok = int(allow.sum())
+            if n_ok:
+                any_space = True
+                feas_anchors += n_ok
+            grid, budget, near = allow, cap, None
+            if nm_k > 0 and nm_alive \
+                    and (nm_dens <= 0.0 or _dens0(j) < nm_dens):
+                _cs = raster._cscan.get(j, {}).get((i, o))
+                if _cs is None or _cs[0] != raster.ver[j]:
+                    _mk, _, _ = raster.mask(i, o)
+                    _Kq, _MHq, _MWq = _mk.shape
+                    proxy = (float(max(raster.H[j] - _MHq + 1, 0))
+                             * max(raster.W[j] - _MWq + 1, 0) * _MHq * _MWq * _Kq)
+                    if nm_flops + proxy > nm_flop_cap:
+                        nm_alive = False
+                    else:
+                        nm_flops += proxy
+                if nm_alive:
+                    total, _, _ = raster.count_scan(j, i, o)
+                    if total is not None:
+                        near = np.zeros_like(allow)
+                        _sub = total[r_lo:r_hi + 1, c_lo:c_hi + 1]
+                        near[r_lo:r_hi + 1, c_lo:c_hi + 1] = \
+                            (_sub > 0) & (_sub <= nm_k)
+                        if near.any():
+                            grid = allow | near
+                            budget = cap + nm_cap
+                        else:
+                            near = None
+            cells = raster.order_cells(j, i, o, grid, budget, futs, frag_w,
+                                       with_vals=True)
+            if cells:
+                oc_n += 1
+                if oc_n == flip_call and len(cells) > 1:
+                    cells = cells[1:] + cells[:1]
+            meta[o] = (allow, near, mx0, my0)
+            for (r, c, v) in cells:
+                pool.append((v, o, r, c, near is not None and not allow[r, c]))
+        if not pool:
+            if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
+                PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
+                                 feas_anchors, 0, 0)
+                return True
+            PROBE.on_attempt(t, j, i, rank, earlier,
+                             "gate_fail" if any_space else "no_space",
+                             feas_anchors, 0, 0)
+            return False
+        # 전역 접촉점수 내림차순 (동점 tie-break = order_cells와 동형: r, c; 안정정렬 = orient순)
+        pool.sort(key=lambda e: (-e[0], e[2], e[3]))
+        cells_tried = gate_rej = 0
+        for (v, o, r, c, is_near) in pool:
+            cells_tried += 1
+            allow, near, mx0, my0 = meta[o]
+            pos = (int(c) - mx0, int(r) - my0)
+            if is_near:
+                if not nes_space.space_ok(j, raster.ver[j], i, o, pos,
+                                          placed[j], coords, orient):
+                    gate_rej += 1
+                    continue
+            if _exact_gate(i, j, o, pos, xt):
+                coords[i] = pos
+                orient[i] = o
+                entry[i] = t
+                exit_[i] = xt
+                raster.add(j, i, o, pos)
+                placed[j].append(i)
+                PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
+                                 feas_anchors, cells_tried, gate_rej)
+                return True
+            gate_rej += 1
         if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
             PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
                              feas_anchors, cells_tried, gate_rej)

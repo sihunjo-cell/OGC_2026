@@ -502,7 +502,7 @@ class Raster:
         return f
 
     def order_cells(self, j: int, i: int, o: int, feas, cap: int,
-                    futures=None, frag_w: float = 0.0):
+                    futures=None, frag_w: float = 0.0, with_vals: bool = False):
         """앵커를 접촉점수 내림차순 cap개로 (frag_w>0 = ΔF; invariants 원장)."""
         rs, cs = np.nonzero(feas)
         if rs.size == 0:
@@ -533,6 +533,8 @@ class Raster:
             vals = vals - frag_w * pen
         idx = np.lexsort((cs, rs, -vals))
         take = idx if cap is None else idx[:cap]
+        if with_vals:
+            return [(int(rs[t]), int(cs[t]), float(vals[t])) for t in take]
         return [(int(rs[t]), int(cs[t])) for t in take]
 
     @staticmethod
