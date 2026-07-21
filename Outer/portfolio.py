@@ -57,6 +57,8 @@ def default_portfolio(prob_info: dict = None) -> list:
                 dispatch_nestle_flop_cap=2e11)
     # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
+    # orient-합동 순위: 혼잡(거인) 공격 워커 전용 (T600 은행 39 −7.84% 실측; slot0/비혼잡=off)
+    oj = dict(dispatch_orient_joint=True)
     if _swap_floors(prob_info):
         # κ3-off floor -> κ1-k64 + near-main(K32/cap16) = 26 직격 (T900 8.63M; seed5 = 검증 최저)
         slot2 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
@@ -64,18 +66,18 @@ def default_portfolio(prob_info: dict = None) -> list:
                                                 dispatch_nearmain_k=32,
                                                 dispatch_nearmain_cap=16,
                                                 dispatch_nearmain_dens_hi=0.55,
-                                                **nes1))
+                                                **oj, **nes1))
         # κ1-off floor -> T4 = κ1-k64 + near-main(K16/cap8) = 38 봉인(K32는 38 +897k 회귀)
         slot4 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 dispatch_nearmain_k=16,
                                                 dispatch_nearmain_cap=8,
                                                 dispatch_nearmain_dens_hi=0.55,
-                                                **nes1))
+                                                **oj, **nes1))
         # W2 = κ1-k64 + 결정-플립 재시작(stall6) + inbay 순서-프로브 -- 27직격·28/31 순서축(−7.7/−2.3% 2seed)
         slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=6, restart_flip=1, inbay_stall=4,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                **nes1))
+                                                **oj, **nes1))
     else:
         slot2 = OuterConfig(xi=0.3, seed=1,
                             phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,

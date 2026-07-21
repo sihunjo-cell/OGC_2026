@@ -27,6 +27,8 @@ class Phase2Config:
     fragdelta_dens_hi: float = 0.0
     # 결정-플립: k번째 anchor-선택의 순위 회전(형제 궤적) -- 재시작 다양화용 (0=off)
     dispatch_flip_call: int = 0
+    # orient-합동 순위: 전 orientation 후보를 접촉점수로 병합해 전역 순위로 admit (False=순차 first-fit)
+    dispatch_orient_joint: bool = False
     # near-main 합류: 얕은-겹침(count<=K) 앵커를 main-pass 접촉-순위 경쟁에 합류 (0=off)
     dispatch_nearmain_k: int = 0
     dispatch_nearmain_cap: int = 16       # 합류 시 추가 후보 예산
