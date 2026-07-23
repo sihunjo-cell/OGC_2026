@@ -88,6 +88,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     for j in range(pre.n_bays)]
         bay_occ = [0.0] * pre.n_bays
     kappa = max(1e-9, float(cfg.atc_kappa))
+    atc_alpha = float(getattr(cfg, "atc_alpha", 0.0) or 0.0)   # 면적-지수(κ·α 로터리, off=byte-identical)
     # 게이트 쌍판정 memo (판정-동치 -- 근거·한계는 issue/05 Results)
     gate_memo: dict = {}
     gate_omemo: dict = {}
@@ -101,9 +102,12 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     forced_cons: set = set()
 
     def _prio(i, t):
-        # ATC: 1/P * exp(-max(0, slack)/(kappa*pbar))
+        # ATC: 1/P * exp(-max(0, slack)/(kappa*pbar)); atc_alpha>0 = /amin^alpha (대형 지연)
         slack = D[i] - P[i] - t
-        return (1.0 / max(1, P[i])) * math.exp(-max(0.0, slack) / (kappa * pbar))
+        p = (1.0 / max(1, P[i])) * math.exp(-max(0.0, slack) / (kappa * pbar))
+        if atc_alpha != 0.0:
+            p /= max(1.0, float(amin[i])) ** atc_alpha
+        return p
 
     # in-bay 순서 힌트: hint 있는 블록을 release tick 내 먼저 admit (None=순수 ATC=동일)
     order_hint = getattr(cfg, "dispatch_order_hint", None) or {}

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 class Phase2Config:
     # -- 이벤트 구동 ATC 디스패처 (Phase2.dispatch) ---------------------------
     atc_kappa: float = 2.0          # ATC 여유 감쇠 (포트폴리오 워커별 로터리)
+    atc_alpha: float = 0.0          # 면적-지수 우선순위: prio /= amin^alpha (>0=대형블록 전략적 지연, 0=끔)
     dispatch_cand_cap: int = 12     # (bay, orient)당 정확 게이트에 넘길 셀 수
     dispatch_cand_cap_hi: int = 48  # 큐 길이 >= queue_hi면 확대
     dispatch_queue_hi: int = 20

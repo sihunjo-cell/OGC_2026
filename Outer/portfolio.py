@@ -59,7 +59,12 @@ def default_portfolio(prob_info: dict = None) -> list:
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
     # orient-합동 순위: 혼잡(거인) 공격 워커 전용 (T600 은행 39 −7.84% 실측; slot0/비혼잡=off)
     oj = dict(dispatch_orient_joint=True)
-    if _swap_floors(prob_info):
+    # κ·α 로터리(편입 07-22): 대형블록 우선(α=-0.5). 배포 A/B min-pool 순 −0.39M
+    # (39 −6.69%·31 −3.20%·38 +1.47%, 26/27=α없는 전용슬롯 커버=불변). slot4(nm-K16 챔프=검증config).
+    # 경쟁자 α-로터리(대형지연) 반전 채택. seed-robust(39 3seed·31 2seed·below-floor). 근거=ogc-timecool-basin.
+    _alpha = dict(atc_alpha=-0.5)
+    _congested = _swap_floors(prob_info)
+    if _congested:
         # κ3-off floor -> κ1-k64 + near-main(K32/cap16) = 26 직격 (T900 8.63M; seed5 = 검증 최저)
         slot2 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
@@ -73,7 +78,7 @@ def default_portfolio(prob_info: dict = None) -> list:
                                                 dispatch_nearmain_k=16,
                                                 dispatch_nearmain_cap=8,
                                                 dispatch_nearmain_dens_hi=0.55,
-                                                **oj, **nes1))
+                                                **_alpha, **oj, **nes1))
         # W2 = κ1-k64 + 결정-플립 재시작(stall6) + inbay 순서-프로브 -- 27직격·28/31 순서축(−7.7/−2.3% 2seed)
         slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=6, restart_flip=1, inbay_stall=4,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
@@ -88,13 +93,20 @@ def default_portfolio(prob_info: dict = None) -> list:
         slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 **nes1))                                    # κ1 dyn-on (k64)
-    return [
-        OuterConfig(xi=0.3, seed=1, restart_stall=8,
-                    phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes)),   # κ3 dyn-on (warm, ΔF)
-        slot2,
-        slot3,
-        slot4,
-    ]
+    # slot0 = κ3 dyn-on (warm, ΔF). 기본값 유지 = byte-identical.
+    slot0 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
+                        phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes))
+    # VARIANT(env, 검증용): 혼잡 레짐서 slot0 k3fd(전체 14문제 seed-min 0승=죽은슬롯)을
+    # nm16(κ1-nm16-oj, α없음, seed7)으로 교체. nm16 = 챔피언(30·33·18·40 승, p18 +20.9%).
+    # 혼잡 챔프셋 = {nm16a, nm16, flip, nm32} = 슬롯4개에 정확히 매칭. 근거=grid_T720/med/big 매트릭스.
+    if _congested and os.environ.get("OGC_PF_VARIANT"):
+        slot0 = OuterConfig(xi=0.5, seed=7, restart_stall=16,
+                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+                                                dispatch_nearmain_k=16,
+                                                dispatch_nearmain_cap=8,
+                                                dispatch_nearmain_dens_hi=0.55,
+                                                **oj, **nes1))
+    return [slot0, slot2, slot3, slot4]
 
 
 def _warm_cache(prob_info: dict, pre, cfg: OuterConfig, deadline=None):
