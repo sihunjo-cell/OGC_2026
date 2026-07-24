@@ -65,13 +65,16 @@ def default_portfolio(prob_info: dict = None) -> list:
     _alpha = dict(atc_alpha=-0.5)
     _congested = _swap_floors(prob_info)
     if _congested:
-        # κ3-off floor -> κ1-k64 + near-main(K32/cap16) = 26 직격 (T900 8.63M; seed5 = 검증 최저)
+        # slot2 = κ1-nm32-oj + α (=nm32a). 매트릭스 14/14 재선정서 nm32→nm32a = seed-robust
+        # −0.97%(mid-tier 38/39/26/30/33/36 제패, α를 K16 대신 K32 base에). 최대문제 회귀(18/20)는
+        # min-pool서 flip/nm16 커버=무해. 배포 A/B 확증(39 −0.89%·26 −5.26% matrix-exact·20 무회귀).
+        # 근거=ogc-portfolio-champion4-0723 / grid_widen_T720.
         slot2 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 dispatch_nearmain_k=32,
                                                 dispatch_nearmain_cap=16,
                                                 dispatch_nearmain_dens_hi=0.55,
-                                                **oj, **nes1))
+                                                **_alpha, **oj, **nes1))
         # κ1-off floor -> T4 = κ1-k64 + near-main(K16/cap8) = 38 봉인(K32는 38 +897k 회귀)
         slot4 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
@@ -93,19 +96,20 @@ def default_portfolio(prob_info: dict = None) -> list:
         slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 **nes1))                                    # κ1 dyn-on (k64)
-    # slot0 = κ3 dyn-on (warm, ΔF). 기본값 유지 = byte-identical.
-    slot0 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
-                        phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes))
-    # VARIANT(env, 검증용): 혼잡 레짐서 slot0 k3fd(전체 14문제 seed-min 0승=죽은슬롯)을
-    # nm16(κ1-nm16-oj, α없음, seed7)으로 교체. nm16 = 챔피언(30·33·18·40 승, p18 +20.9%).
-    # 혼잡 챔프셋 = {nm16a, nm16, flip, nm32} = 슬롯4개에 정확히 매칭. 근거=grid_T720/med/big 매트릭스.
-    if _congested and os.environ.get("OGC_PF_VARIANT"):
+    # slot0: 비혼잡 = κ3 dyn-on (warm, ΔF). 혼잡 = nm16(κ1-nm16-oj, seed7).
+    # 근거(07-23 매트릭스 감사): 혼잡 14/14 config×seed 매트릭스서 k3fd는 0/14 승 = 죽은슬롯.
+    # 혼잡 챔프셋 = {nm16a, nm16, flip, nm32} = 슬롯4개에 정확히 매칭. nm16 = 30·33·18·40 챔프
+    # (p18 +20.9%). 배포 A/B{18,39} 확증(p18 −19.18% fidelity·p39 무회귀). 원장=ogc-portfolio-champion4-0723.
+    if _congested:
         slot0 = OuterConfig(xi=0.5, seed=7, restart_stall=16,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
                                                 dispatch_nearmain_k=16,
                                                 dispatch_nearmain_cap=8,
                                                 dispatch_nearmain_dens_hi=0.55,
                                                 **oj, **nes1))
+    else:
+        slot0 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
+                            phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes))
     return [slot0, slot2, slot3, slot4]
 
 
