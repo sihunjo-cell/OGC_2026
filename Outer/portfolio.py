@@ -59,6 +59,10 @@ def default_portfolio(prob_info: dict = None) -> list:
     fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
     # orient-합동 순위: 혼잡(거인) 공격 워커 전용 (T600 은행 39 −7.84% 실측; slot0/비혼잡=off)
     oj = dict(dispatch_orient_joint=True)
+    scarce_order = {} if os.environ.get("OGC_DISABLE_SCARCE_ORDER") else dict(dispatch_order_mode="atc_scarce",
+                        dispatch_order_area_w=0.08,
+                        dispatch_order_scarce_w=0.20,
+                        dispatch_order_burst_w=0.75)
     if _swap_floors(prob_info):
         # κ3-off floor -> κ1-k64 + near-main(K32/cap16) = 26 직격 (T900 8.63M; seed5 = 검증 최저)
         slot2 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
@@ -77,7 +81,7 @@ def default_portfolio(prob_info: dict = None) -> list:
         # W2 = κ1-k64 + 결정-플립 재시작(stall6) + inbay 순서-프로브 -- 27직격·28/31 순서축(−7.7/−2.3% 2seed)
         slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=6, restart_flip=1, inbay_stall=4,
                             phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                **oj, **nes1))
+                                                **scarce_order, **oj, **nes1))
     else:
         slot2 = OuterConfig(xi=0.3, seed=1,
                             phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,

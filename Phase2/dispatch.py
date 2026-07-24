@@ -80,6 +80,25 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             getattr(cfg, "dispatch_nestle_fast", True)))
     pbar = (sum(P) / n) if n else 1.0
     amin = [min(pre.area[i]) for i in range(n)]
+    order_mode = str(getattr(cfg, "dispatch_order_mode", "atc") or "atc")
+    order_area_w = float(getattr(cfg, "dispatch_order_area_w", 0.0) or 0.0)
+    order_scarce_w = float(getattr(cfg, "dispatch_order_scarce_w", 0.0) or 0.0)
+    order_burst_w = float(getattr(cfg, "dispatch_order_burst_w", 0.0) or 0.0)
+    order_boost = (
+        order_mode == "atc_scarce"
+        and (order_area_w > 0.0 or order_scarce_w > 0.0 or order_burst_w > 0.0)
+    )
+    order_area_scale = max(amin) if amin else 1.0
+    order_fit_scarcity = [0.0] * n
+    if order_boost and order_scarce_w > 0.0:
+        for i in range(n):
+            fit_count = 0
+            for j2 in range(pre.n_bays):
+                for o in range(len(pre.poly[i])):
+                    (xl, xh), (yl, yh) = pre.IFP[i][o][j2]
+                    if xl <= xh and yl <= yh:
+                        fit_count += 1
+            order_fit_scarcity[i] = 1.0 / math.sqrt(max(1, fit_count))
     # 라우팅용 bay별 점유/용량 추적
     bay_area = bay_occ = None
     if dyn_bay:
@@ -108,9 +127,17 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     # in-bay 순서 힌트: hint 있는 블록을 release tick 내 먼저 admit (None=순수 ATC=동일)
     order_hint = getattr(cfg, "dispatch_order_hint", None) or {}
 
-    def _order_key(i, t):
+    def _order_key(i, t, j):
         h = order_hint.get(i) if hasattr(order_hint, "get") else None
-        return (0, h, i) if h is not None else (1, -_prio(i, t), i)
+        if h is not None:
+            return (0, h, i)
+        score = _prio(i, t)
+        if order_boost:
+            area = amin[i] / max(order_area_scale, 1e-9)
+            congested = len(queue[j]) >= int(getattr(cfg, "dispatch_queue_hi", 20) or 20)
+            burst = order_burst_w if congested else 0.0
+            score *= 1.0 + order_area_w * area * (1.0 + burst) + order_scarce_w * order_fit_scarcity[i]
+        return (1, -score, i)
 
     def _exact_gate(i, j, o, pos, xt):
         # 시간축 crane 검사(역방향+내 exit). 경계 규칙은 메모리 ogc-code-invariants 참조.
@@ -457,7 +484,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     futures = None
             _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
             _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
-            for _rank, i in enumerate(sorted(queue[j], key=lambda b: _order_key(b, t))):
+            for _rank, i in enumerate(sorted(queue[j], key=lambda b: _order_key(b, t, j))):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
                 if _try_admit(i, j, t, _rank, _earlier, futures):
