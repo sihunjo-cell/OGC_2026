@@ -38,3 +38,11 @@ reports/
 /scripts/
 /tests/
 /tools/
+personalized_tools/
+
+# ML experiment artifacts (source under ml/ is tracked)
+ml_out/
+models/
+*.joblib
+*.pkl
+*.onnx
