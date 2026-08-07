@@ -6,8 +6,8 @@ import math
 import os
 from typing import Optional
 
-from .config import DP_TOL, GEOM_MODE
-from .geometry import (simplify_layer, bounding_box, polygon_area,
+from .config import GEOM_MODE
+from .geometry import (bounding_box, polygon_area,
                        nfp_rings, nfp_rings_hybrid, convex_decompose)
 
 
@@ -72,12 +72,8 @@ class NFPCache:
 # 0.2 테이블 빌더
 # -----------------------------------------------------------------------------
 
-def precompute_geometry(prob_info: dict, dp_tol: Optional[float] = None,
-                        geom_mode: Optional[str] = None) -> dict:
+def precompute_geometry(prob_info: dict, geom_mode: Optional[str] = None) -> dict:
     """기하 테이블 dict(poly/bbox/area/IFP/nfp) -- IFP 비면(x_lo>x_hi) 그 bay에 못 들어감."""
-    if dp_tol is None:
-        dp_tol = DP_TOL
-
     bays = prob_info["bays"]
     blocks = prob_info["blocks"]
     n_blocks = len(blocks)
@@ -92,7 +88,9 @@ def precompute_geometry(prob_info: dict, dp_tol: Optional[float] = None,
         shape = blk["shape"]
         block_poly, block_bbox, block_area, block_ifp = [], [], [], []
         for orient in shape:
-            layers = [simplify_layer(layer, dp_tol) for layer in orient["layers"] if layer]
+            # 원본 정점 유지 (서버가 원본 폴리곤으로 검증 -- invariants 원장)
+            layers = [[(float(v[0]), float(v[1])) for v in layer]
+                      for layer in orient["layers"] if layer]
             block_poly.append(layers)
 
             all_verts = [v for layer in layers for v in layer]

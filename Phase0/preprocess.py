@@ -31,10 +31,9 @@ class PRE:
     n_bays: int
 
     @classmethod
-    def build(cls, prob_info: dict, dp_tol: Optional[float] = None,
-              geom_mode: Optional[str] = None) -> "PRE":
+    def build(cls, prob_info: dict, geom_mode: Optional[str] = None) -> "PRE":
         const = precompute_constants(prob_info)
-        geom = precompute_geometry(prob_info, dp_tol=dp_tol, geom_mode=geom_mode)
+        geom = precompute_geometry(prob_info, geom_mode=geom_mode)
         return cls(
             u=const["u"], Smax=const["Smax"],
             EST=const["EST"], slack=const["slack"],
@@ -44,7 +43,6 @@ class PRE:
         )
 
 
-def preprocess(prob_info: dict, dp_tol: Optional[float] = None,
-               geom_mode: Optional[str] = None) -> PRE:
+def preprocess(prob_info: dict, geom_mode: Optional[str] = None) -> PRE:
     """PRE 번들 생성 (geom_mode = NFP 백엔드 오버라이드)."""
-    return PRE.build(prob_info, dp_tol=dp_tol, geom_mode=geom_mode)
+    return PRE.build(prob_info, geom_mode=geom_mode)

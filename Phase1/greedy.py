@@ -8,15 +8,6 @@ from . import common
 from .dff import dff_lb
 
 
-def _max_imbalance(load: list, u: list) -> float:
-    """floor 안 씌운 Z2 (정규화 부하 불균형 최대)."""
-    m = len(load)
-    if m < 2:
-        return 0.0
-    wl = [u[j] * load[j] for j in range(m)]
-    return max(wl) - min(wl)
-
-
 def firstfit_greedy(prob_info: dict, pre, cfg, deadline=None) -> list:
     blocks = prob_info["blocks"]
     bays = prob_info["bays"]
@@ -95,7 +86,7 @@ def firstfit_greedy(prob_info: dict, pre, cfg, deadline=None) -> list:
             # myopic 목적함수 증가분
             trial = list(load)
             trial[j] += L[i]
-            z2_after = _max_imbalance(trial, u)
+            z2_after = common.max_imbalance(trial, u)
             return (cfg.alpha_h * w2 * z2_after
                     + cfg.beta_h * w3 * (Smax[i] - S[i][j])
                     + _crowd(i, j))

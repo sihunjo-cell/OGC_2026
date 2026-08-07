@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from Phase2.contract import Phase1Output
+from .common import max_imbalance
 
 
 def init_timing(bay: list, prob_info: dict, pre) -> Phase1Output:
@@ -25,17 +26,11 @@ def init_timing(bay: list, prob_info: dict, pre) -> Phase1Output:
     # 임시 Z1
     Z1 = sum(max(0, exit_[i] - D[i]) for i in range(n))
 
-    # Z2 (utils 공식)
+    # Z2 (utils 공식: 쌍별 최대 |가중부하 차| = max - min)
     load = [0.0] * m
     for i in range(n):
         load[bay[i]] += L[i]
-    if m >= 2:
-        Z2 = math.floor(max(
-            abs(u[j1] * load[j1] - u[j2] * load[j2])
-            for j1 in range(m) for j2 in range(m) if j1 != j2
-        ))
-    else:
-        Z2 = 0.0
+    Z2 = math.floor(max_imbalance(load, u)) if m >= 2 else 0.0
 
     # Z3: 선호도 페널티
     Z3 = sum(Smax[i] - S[i][bay[i]] for i in range(n))

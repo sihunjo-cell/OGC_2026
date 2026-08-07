@@ -1,4 +1,4 @@
-"""배정 수준 목적함수 조각 (z2_raw, block_cost)."""
+"""배정 수준 목적함수 조각 (Z2 원값은 Phase1.common.max_imbalance)."""
 
 from __future__ import annotations
 
@@ -9,15 +9,6 @@ def loads_from_bay(bay: list, L: list, m: int) -> list:
         if j is not None:
             loads[j] += L[i]
     return loads
-
-
-def z2_raw(loads: list, u: list) -> float:
-    """floor 미적용 정규화 불균형 최대."""
-    m = len(loads)
-    if m < 2:
-        return 0.0
-    wl = [u[j] * loads[j] for j in range(m)]
-    return max(wl) - min(wl)
 
 
 def block_cost(i: int, s, w1: float, w3: float, D: list, Smax: list, S: list) -> float:

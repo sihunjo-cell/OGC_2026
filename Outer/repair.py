@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 
-from Phase1.common import eligible, footprint_area
-from .objective import loads_from_bay, z2_raw
+from Phase1.common import eligible, footprint_area, max_imbalance
+from .objective import loads_from_bay
 
 
 def _eligible_bays(pre, i, m):
@@ -75,7 +75,7 @@ def repair(partial_bay: list, D, op: str, cfg, prob_info: dict, pre, rng, deadli
         for j in _eligible_bays(pre, i, m):
             trial = list(loads)
             trial[j] += L[i]
-            cost = w2 * z2_raw(trial, u) + w3 * (Smax[i] - S[i][j]) + crowd_pen(i, j)
+            cost = w2 * max_imbalance(trial, u) + w3 * (Smax[i] - S[i][j]) + crowd_pen(i, j)
             if noise_amp > 0:
                 cost += rng.uniform(-noise_amp, noise_amp)
             out.append((cost, j))

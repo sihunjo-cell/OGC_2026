@@ -15,6 +15,7 @@ import tempfile
 import time
 
 from Phase0 import preprocess
+from Phase0.geometry import polygon_area
 from Phase2 import Phase2Config
 from .alns import alns
 from .config import OuterConfig
@@ -34,79 +35,54 @@ def _swap_floors(prob_info) -> bool:
         B = prob_info["blocks"]
         hz = max(b["due_date"] for b in B) - min(b["release_time"] for b in B)
         ba = sum(b2["width"] * b2["height"] for b2 in prob_info["bays"])
-        au = 0.0
-        for b in B:
-            ring = b["shape"][0]["layers"][0]
-            s = 0.0
-            for i in range(len(ring)):
-                x0, y0 = ring[i]
-                x1, y1 = ring[(i + 1) % len(ring)]
-                s += x0 * y1 - x1 * y0
-            au += abs(s) * 0.5 * b["processing_time"]
+        au = sum(polygon_area(b["shape"][0]["layers"][0]) * b["processing_time"]
+                 for b in B)
         return len(B) * (au / max(ba * hz, 1e-9)) >= 50.0
     except Exception:
         return False
 
 
+# 전 슬롯 공통: κ1 + fail_stop24 + hull-nestle k64 (근거 = issue/06 후속 원장)
+_BASE = dict(atc_kappa=1.0, dispatch_admit_fail_stop=24,
+             dispatch_nestle_k=64, dispatch_nestle_cap=64,
+             dispatch_nestle_flop_cap=2e11)
+_NM16 = dict(dispatch_nearmain_k=16, dispatch_nearmain_cap=8,
+             dispatch_nearmain_dens_hi=0.55)
+_NM32 = dict(dispatch_nearmain_k=32, dispatch_nearmain_cap=16,
+             dispatch_nearmain_dens_hi=0.55)
+# orient-합동 순위 (T600 은행 39 −7.84% 실측)
+_OJ = dict(dispatch_orient_joint=True)
+# α<0 = 대형블록 우선 admission (근거 = ogc-timecool-basin-lever-0722)
+_ALPHA = dict(atc_alpha=-0.5)
+
+# (seed, OuterConfig 추가분, Phase2Config 추가분) -- 슬롯 근거 = ogc-portfolio-champion4-0723
+_CONGESTED = [
+    (7, {}, [_NM16, _OJ]),                    # slot0 nm16 (k3fd 죽은슬롯 대체)
+    (5, {}, [_NM32, _ALPHA, _OJ]),            # slot2 nm32a
+    # slot3 결정-플립 재시작 + inbay 순서-프로브 -- 27직격·28/31 순서축(−7.7/−2.3% 2seed)
+    (5, {"restart_stall": 6, "restart_flip": 1, "inbay_stall": 4}, [_OJ]),
+    (5, {}, [_NM16, _ALPHA, _OJ]),            # slot4 nm16a = 38 봉인(K32는 38 +897k 회귀)
+]
+_NONCONGESTED = [
+    (1, {}, [_NM16, _OJ]),   # slot0 회수 warm-start (NCREC 위 p37 −2.96%, p9/p5 무회귀)
+    (7, {}, [_NM16, _OJ]),   # slot2 2nd 회수-seed = 회수 seed-min 포획 (배포 A/B −13.91%)
+    (5, {}, []),             # slot3 κ1 dyn-on (k64) = ncdyn floor 보존
+    (5, {}, [_NM16, _OJ]),   # slot4 nm16-회수 (비혼잡 대형)
+]
+
+
 def default_portfolio(prob_info: dict = None) -> list:
-    """4-워커 min-wins 포트폴리오: {κ3, κ1} x {dyn-on, dyn-off(floor)} -- 배선 근거는 메모리 원장."""
-    # hull-nestle: κ3 = k32 유지(38 보호), κ1 = k64 재보정 (근거 = issue/06 후속 원장)
-    nes = dict(dispatch_nestle_k=32, dispatch_nestle_cap=32,
-               dispatch_nestle_flop_cap=2e10)
-    nes1 = dict(dispatch_nestle_k=64, dispatch_nestle_cap=64,
-                dispatch_nestle_flop_cap=2e11)
-    # 형성기-게이트 ΔF: κ3 dyn-on 전용, κ1은 의도적 클린 (근거 = fgd 원장)
-    fd = dict(dispatch_fragdelta=20.0, fragdelta_queue_hi=1, fragdelta_dens_hi=0.55)
-    # orient-합동 순위: 혼잡(거인) 공격 워커 전용 (T600 은행 39 −7.84% 실측; slot0/비혼잡=off)
-    oj = dict(dispatch_orient_joint=True)
-    # α<0 = 대형블록 우선 admission (근거 = ogc-timecool-basin-lever-0722)
-    _alpha = dict(atc_alpha=-0.5)
-    _congested = _swap_floors(prob_info)
-    if _congested:
-        # slot2 = nm32a (κ1-nm32-oj + α). 근거 = ogc-portfolio-champion4-0723
-        slot2 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                dispatch_nearmain_k=32,
-                                                dispatch_nearmain_cap=16,
-                                                dispatch_nearmain_dens_hi=0.55,
-                                                **_alpha, **oj, **nes1))
-        # κ1-off floor -> T4 = κ1-k64 + near-main(K16/cap8) = 38 봉인(K32는 38 +897k 회귀)
-        slot4 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                dispatch_nearmain_k=16,
-                                                dispatch_nearmain_cap=8,
-                                                dispatch_nearmain_dens_hi=0.55,
-                                                **_alpha, **oj, **nes1))
-        # W2 = κ1-k64 + 결정-플립 재시작(stall6) + inbay 순서-프로브 -- 27직격·28/31 순서축(−7.7/−2.3% 2seed)
-        slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=6, restart_flip=1, inbay_stall=4,
-                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                **oj, **nes1))
-    else:
-        slot2 = OuterConfig(xi=0.3, seed=1,
-                            phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8,
-                                                dispatch_dynamic_bay=False))               # κ3 floor
-        # slot4 = nm16-회수 (κ1-nm16-oj). 비혼잡 대형 회수. 근거 = ogc-portfolio-champion4-0723
-        slot4 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                dispatch_nearmain_k=16,
-                                                dispatch_nearmain_cap=8,
-                                                dispatch_nearmain_dens_hi=0.55,
-                                                **oj, **nes1))               # nm16-회수
-        slot3 = OuterConfig(xi=0.5, seed=5, restart_stall=16,
-                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                **nes1))                                    # κ1 dyn-on (k64)
-    # slot0 = 혼잡:nm16(k3fd 죽은슬롯 대체) / 비혼잡:κ3-fd warm. 근거 = ogc-portfolio-champion4-0723
-    if _congested:
-        slot0 = OuterConfig(xi=0.5, seed=7, restart_stall=16,
-                            phase2=Phase2Config(atc_kappa=1.0, dispatch_admit_fail_stop=24,
-                                                dispatch_nearmain_k=16,
-                                                dispatch_nearmain_cap=8,
-                                                dispatch_nearmain_dens_hi=0.55,
-                                                **oj, **nes1))
-    else:
-        slot0 = OuterConfig(xi=0.3, seed=1, restart_stall=8,
-                            phase2=Phase2Config(atc_kappa=3.0, dispatch_admit_fail_stop=8, **fd, **nes))
-    return [slot0, slot2, slot3, slot4]
+    """4-워커 min-wins 포트폴리오 (전 슬롯 κ1·dyn-on; 배선 근거는 메모리 원장)."""
+    out = []
+    for seed, outer, p2_extra in (_CONGESTED if _swap_floors(prob_info)
+                                  else _NONCONGESTED):
+        p2 = dict(_BASE)
+        for e in p2_extra:
+            p2.update(e)
+        oc = dict(xi=0.5, seed=seed, restart_stall=16)
+        oc.update(outer)
+        out.append(OuterConfig(phase2=Phase2Config(**p2), **oc))
+    return out
 
 
 def _warm_cache(prob_info: dict, pre, cfg: OuterConfig, deadline=None):

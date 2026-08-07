@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
+from Phase0.geometry import polygon_area
 
-def _shoelace(pts) -> float:
-    n = len(pts)
-    if n < 3:
+
+def max_imbalance(loads: list, u: list) -> float:
+    """floor 미적용 정규화 부하 불균형 최대 (= Z2 원값; Phase1/Outer 공용)."""
+    m = len(loads)
+    if m < 2:
         return 0.0
-    s = 0.0
-    for k in range(n):
-        x1, y1 = pts[k]
-        x2, y2 = pts[(k + 1) % n]
-        s += x1 * y2 - x2 * y1
-    return abs(s) * 0.5
+    wl = [u[j] * loads[j] for j in range(m)]
+    return max(wl) - min(wl)
 
 
 def eligible(pre, i: int, j: int) -> bool:
@@ -48,7 +47,7 @@ def footprint_area(pre, i: int) -> float:
     layers = pre.poly[i][o]
     if not layers:
         return 0.0
-    return max(_shoelace(layer) for layer in layers)
+    return max(polygon_area(layer) for layer in layers)
 
 
 def time_overlap(entry, exit_, a: int, b: int) -> bool:

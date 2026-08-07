@@ -19,13 +19,6 @@ class Phase2Config:
     mask_cache_share: bool = True   # 마스크 캐시 pre 공유 (설계도 간 재사용, 비트동일)
     # 동적 bay: 지각확정 블록만 least-util 타 bay로 admit-now (False = 고정-bay floor용)
     dispatch_dynamic_bay: bool = True
-    # ΔF 파편화 항: 앵커 점수에 미래-앵커 살해 페널티 (0 = 끔; 배선 근거 = fgd 원장)
-    dispatch_fragdelta: float = 0.0
-    fragdelta_queue_hi: int = 6     # bay 큐 길이 임계 (이상일 때만 활성)
-    fragdelta_q: int = 4            # M* 크기
-    fragdelta_flop_cap: float = 2e9  # 디코드당 FLOP 상한 -- 초과 시 잔여 비활성
-    # ΔF 형성기 게이트: bay 밀도 >= 값이면 항 비활성 (0 = 게이트 없음)
-    fragdelta_dens_hi: float = 0.0
     # 결정-플립: k번째 anchor-선택의 순위 회전(형제 궤적) -- 재시작 다양화용 (0=off)
     dispatch_flip_call: int = 0
     # orient-합동 순위: 전 orientation 후보를 접촉점수로 병합해 전역 순위로 admit (False=순차 first-fit)
@@ -39,7 +32,7 @@ class Phase2Config:
     dispatch_nestle_k: int = 0
     dispatch_nestle_cap: int = 32
     dispatch_nestle_fast: bool = True    # 판정-동치 numba 가속 (False = 순수 shapely)
-    dispatch_nestle_flop_cap: float = 2e10  # 디코드당 FLOP 상한 (fragdelta 캡과 동형)
+    dispatch_nestle_flop_cap: float = 2e10  # 디코드당 FLOP 상한 (P6 자동 셧오프)
     dispatch_order_hint: object = None  # {block_id: priority_rank} in-bay 순서 프로브용 (None=ATC 순수)
     # -- 크레인 repair 안전망 (driver) ----------------------------------------
     max_repair_passes: int = 2

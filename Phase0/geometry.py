@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 import numpy as _np
@@ -41,63 +40,6 @@ def bounding_box(pts: list) -> tuple[float, float, float, float]:
     xs = [v[0] for v in pts]
     ys = [v[1] for v in pts]
     return (min(xs), min(ys), max(xs), max(ys))
-
-
-def _perp_dist(p, a, b) -> float:
-    """점-직선 수직 거리."""
-    ax, ay = a
-    bx, by = b
-    px, py = p
-    dx = bx - ax
-    dy = by - ay
-    if dx == 0.0 and dy == 0.0:
-        return math.hypot(px - ax, py - ay)
-    t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)
-    projx = ax + t * dx
-    projy = ay + t * dy
-    return math.hypot(px - projx, py - projy)
-
-
-def _dp_open(pts: list, tol: float) -> list:
-    """열린 폴리라인 Douglas-Peucker (끝점 유지)."""
-    if len(pts) < 3:
-        return list(pts)
-    a, b = pts[0], pts[-1]
-    dmax, idx = -1.0, -1
-    for i in range(1, len(pts) - 1):
-        d = _perp_dist(pts[i], a, b)
-        if d > dmax:
-            dmax, idx = d, i
-    if dmax > tol:
-        left = _dp_open(pts[:idx + 1], tol)
-        right = _dp_open(pts[idx:], tol)
-        return left[:-1] + right
-    return [a, b]
-
-
-def _douglas_peucker_closed(pts: list, tol: float) -> list:
-    """닫힌 ring Douglas-Peucker (pts[0] = 기준점 보존)."""
-    n = len(pts)
-    if n <= 3:
-        return list(pts)
-    p0 = pts[0]
-    far = max(range(n), key=lambda k: (pts[k][0] - p0[0]) ** 2 + (pts[k][1] - p0[1]) ** 2)
-    if far == 0:
-        return list(pts)
-    first = _dp_open(pts[0:far + 1], tol)               # p0 ... p_far
-    second = _dp_open(pts[far:] + [pts[0]], tol)         # p_far ... p_{n-1} ... p0
-    return first[:-1] + second[:-1]
-
-
-def simplify_layer(pts: list, tol: float) -> list:
-    """layer ring 단순화 (tol<=0 = 원본 유지)."""
-    ring = [(float(v[0]), float(v[1])) for v in pts]
-    if tol <= 0.0 or len(ring) <= 3:
-        return ring
-    res = _douglas_peucker_closed(ring, tol)
-    if len(res) < 3:
-        return ring
-    return res
 
 
 def _shapely_polygon(pts: list) -> Optional[_ShapelyPolygon]:

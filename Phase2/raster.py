@@ -10,8 +10,6 @@ import numpy as np
 import shapely
 from shapely.geometry import Polygon
 
-from ._diag import PROBE
-
 try:
     from numba import njit as _njit
     _HAVE_NUMBA = True
@@ -210,11 +208,6 @@ class Raster:
             fr1 = r0 + MH if r0 + MH < self.H[j] else self.H[j] - 1
             fc1 = c0 + MW if c0 + MW < self.W[j] else self.W[j] - 1
             self._dirty[j].append((fr0, fc0, fr1, fc1))
-        if PROBE.enabled:
-            PROBE.on_stamp(j, i, sgn, int(mask.any(axis=0).sum()),
-                           self.H[j] * self.W[j])
-        else:
-            PROBE.on_stamp(j, i, sgn)
 
     # -- suffix union: union_ge(j)[k] = OR(층 >= k 점유) --
 
@@ -231,11 +224,23 @@ class Raster:
             if g is not None:
                 acc = acc | (g > 0).astype(np.int32)   # 새 배열(OR); 층별 객체 분리
             out[k] = acc
-        PROBE.on_wholebay("점유합집합", float(self.H[j]) * self.W[j] * max(Kocc, 0))
         self._uge[j] = (self.ver[j], out)
         return out
 
     # -- 전수 위치 스캔 ----------------------------------------------------------
+
+    def _einsum_count(self, j, m32, K, MH, MW, r0, r1, c0, c1):
+        """앵커창 [r0,r1)x[c0,c1)의 층별 겹침 카운트 합 (uge sliding-window einsum)."""
+        uge = self.union_ge(j)
+        out = np.zeros((r1 - r0, c1 - c0), dtype=np.int32)
+        for k in range(min(K, len(uge))):
+            Vk = uge[k]
+            if not Vk.any():
+                continue
+            win = np.lib.stride_tricks.sliding_window_view(
+                Vk[r0:r1 + MH - 1, c0:c1 + MW - 1], (MH, MW))
+            out += np.einsum('rcij,ij->rc', win, m32[k])
+        return out
 
     def _affected_region(self, j, v0, v1, MH, MW, R, C):
         """v0~v1 스탬프가 건드릴 앵커 범위(반열린) 또는 None(무영향)."""
@@ -286,7 +291,6 @@ class Raster:
         cached = per_bay.get((i, o))
         v1 = self.ver[j]
         if cached is not None and cached[0] == v1:
-            PROBE.on_scan_hit(j, i, o)
             return cached[1], cached[2], cached[3]
         mask, mx0, my0 = self.mask(i, o)
         K, MH, MW = mask.shape
@@ -307,9 +311,7 @@ class Raster:
                         ct = self._cscan.get(j, {}).get((i, o))
                         if ct is not None and ct[0] == cached[0]:
                             self._cscan[j][(i, o)] = (v1, ct[1], ct[2], ct[3])
-                        PROBE.on_scan_hit(j, i, o)
                         return feas, mx0, my0
-                _cold = cached is None
                 if R <= 0 or C <= 0:
                     feas = np.zeros((max(R, 0), max(C, 0)), dtype=bool)
                 else:
@@ -329,9 +331,6 @@ class Raster:
                         _feas_gap_layer(g, starts, lens, R, C, feas)
                 self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
-                PROBE.on_scan_miss(j, i, o,
-                                   cached[0] if cached is not None else 0,
-                                   v1, _cold, 0.0, int(feas.sum()))
                 return feas, mx0, my0
 
         # 증분 경로
@@ -346,21 +345,12 @@ class Raster:
                 ct = self._cscan.get(j, {}).get((i, o))
                 if ct is not None and ct[0] == cached[0]:      # count 캐시도 동반 유효
                     self._cscan[j][(i, o)] = (v1, ct[1], ct[2], ct[3])
-                PROBE.on_scan_hit(j, i, o)
                 return feas, mx0, my0
             ar0, ar1, ac0, ac1 = A
             if (ar1 - ar0) * (ac1 - ac0) < R * C:      # 부분일 때만
                 feas = cached[1].copy()
-                uge = self.union_ge(j)
-                sub = np.zeros((ar1 - ar0, ac1 - ac0), dtype=np.int32)
-                m32 = mask.astype(np.int32)
-                for k in range(min(K, len(uge))):
-                    Vk = uge[k]
-                    if not Vk.any():
-                        continue
-                    win = np.lib.stride_tricks.sliding_window_view(
-                        Vk[ar0:ar1 + MH - 1, ac0:ac1 + MW - 1], (MH, MW))
-                    sub += np.einsum('rcij,ij->rc', win, m32[k])
+                sub = self._einsum_count(j, mask.astype(np.int32), K, MH, MW,
+                                         ar0, ar1, ac0, ac1)
                 feas[ar0:ar1, ac0:ac1] = (sub == 0)
                 self._account(per_bay, (i, o), feas)
                 per_bay[(i, o)] = (v1, feas, mx0, my0)
@@ -371,40 +361,22 @@ class Raster:
                     tot2[ar0:ar1, ac0:ac1] = sub
                     self._account(cs_bay, (i, o), tot2)
                     cs_bay[(i, o)] = (v1, tot2, mx0, my0)
-                PROBE.on_scan_miss(j, i, o, cached[0], v1, False,
-                                   float(ar1 - ar0) * (ac1 - ac0) * MH * MW,
-                                   int(feas.sum()))
                 return feas, mx0, my0
             # A가 사실상 전체면 전체 재계산으로 낙하
 
         # 전체 재계산 (콜드 / 비증분 / A=전체)
-        _cached_ver = cached[0] if cached is not None else 0
-        _cold = cached is None
-        _cost = 0.0                      # einsum FLOP 프록시
         if R <= 0 or C <= 0:
             feas = np.zeros((max(R, 0), max(C, 0)), dtype=bool)
         else:
-            uge = self.union_ge(j)
-            total = np.zeros((R, C), dtype=np.int32)
-            m32 = mask.astype(np.int32)
-            for k in range(min(K, len(uge))):
-                Vk = uge[k]
-                if not Vk.any():
-                    continue
-                _cost += float(R) * C * MH * MW
-                win = np.lib.stride_tricks.sliding_window_view(Vk, (MH, MW))
-                total += np.einsum('rcij,ij->rc', win, m32[k])
+            total = self._einsum_count(j, mask.astype(np.int32), K, MH, MW,
+                                       0, R, 0, C)
             feas = (total == 0)
             cs_bay = self._cscan.get(j)
             if cs_bay is not None and (i, o) in cs_bay:        # 기존 count 사용처만 carry
                 self._account(cs_bay, (i, o), total)
                 cs_bay[(i, o)] = (v1, total, mx0, my0)
-        if not _cold and cached[1].shape == feas.shape:
-            PROBE.on_scan_diff(int(np.count_nonzero(feas != cached[1])), feas.size)
         self._account(per_bay, (i, o), feas)
         per_bay[(i, o)] = (v1, feas, mx0, my0)
-        PROBE.on_scan_miss(j, i, o, _cached_ver, v1, _cold, _cost,
-                           int(feas.sum()))
         return feas, mx0, my0
 
     def count_scan(self, j: int, i: int, o: int):
@@ -459,27 +431,12 @@ class Raster:
             ar0, ar1, ac0, ac1 = A
             if (ar1 - ar0) * (ac1 - ac0) < R * C:
                 total = cached[1].copy()
-                uge = self.union_ge(j)
-                sub = np.zeros((ar1 - ar0, ac1 - ac0), dtype=np.int32)
-                for k in range(min(K, len(uge))):
-                    Vk = uge[k]
-                    if not Vk.any():
-                        continue
-                    win = np.lib.stride_tricks.sliding_window_view(
-                        Vk[ar0:ar1 + MH - 1, ac0:ac1 + MW - 1], (MH, MW))
-                    sub += np.einsum('rcij,ij->rc', win, m32[k])
-                total[ar0:ar1, ac0:ac1] = sub
+                total[ar0:ar1, ac0:ac1] = self._einsum_count(
+                    j, m32, K, MH, MW, ar0, ar1, ac0, ac1)
                 self._account(per_bay, (i, o), total)
                 per_bay[(i, o)] = (v1, total, mx0, my0)
                 return total, mx0, my0
-        uge = self.union_ge(j)
-        total = np.zeros((R, C), dtype=np.int32)
-        for k in range(min(K, len(uge))):
-            Vk = uge[k]
-            if not Vk.any():
-                continue
-            win = np.lib.stride_tricks.sliding_window_view(Vk, (MH, MW))
-            total += np.einsum('rcij,ij->rc', win, m32[k])
+        total = self._einsum_count(j, m32, K, MH, MW, 0, R, 0, C)
         self._account(per_bay, (i, o), total)
         per_bay[(i, o)] = (v1, total, mx0, my0)
         return total, mx0, my0
@@ -497,13 +454,12 @@ class Raster:
         inner = (g > 0).astype(np.int32) if g is not None \
             else np.zeros((H, W), dtype=np.int32)
         f[1:H + 1, 1:W + 1] = inner
-        PROBE.on_wholebay("접촉장", float(H) * W)
         self._field[j] = (self.ver[j], f)
         return f
 
     def order_cells(self, j: int, i: int, o: int, feas, cap: int,
-                    futures=None, frag_w: float = 0.0, with_vals: bool = False):
-        """앵커를 접촉점수 내림차순 cap개로 (frag_w>0 = ΔF; invariants 원장)."""
+                    with_vals: bool = False):
+        """앵커를 접촉점수 내림차순 cap개로 (규약 = invariants 원장)."""
         rs, cs = np.nonzero(feas)
         if rs.size == 0:
             return []
@@ -519,29 +475,8 @@ class Raster:
         win = np.lib.stride_tricks.sliding_window_view(field, (MH + 2, MW + 2))
         scores = np.einsum('rcij,ij->rc', win, halo)
         vals = scores[rs, cs]
-        if frag_w > 0.0 and futures:
-            pen = np.zeros(rs.size, dtype=np.float64)
-            for (_m, MHm, MWm, sat, tot) in futures:
-                Rm, Cm = sat.shape[0] - 1, sat.shape[1] - 1
-                # bbox 교차 앵커 창 (반열린)
-                r0 = np.clip(rs - MHm + 1, 0, Rm)
-                r1 = np.clip(rs + MH, 0, Rm)
-                c0 = np.clip(cs - MWm + 1, 0, Cm)
-                c1 = np.clip(cs + MW, 0, Cm)
-                kill = (sat[r1, c1] - sat[r0, c1] - sat[r1, c0] + sat[r0, c0])
-                pen += kill.astype(np.float64) / (tot + 1.0)
-            vals = vals - frag_w * pen
         idx = np.lexsort((cs, rs, -vals))
         take = idx if cap is None else idx[:cap]
         if with_vals:
             return [(int(rs[t]), int(cs[t]), float(vals[t])) for t in take]
         return [(int(rs[t]), int(cs[t])) for t in take]
-
-    @staticmethod
-    def sat_of(allow) -> "np.ndarray":
-        """적분영상 (H+1, W+1): sat[a, b] = allow[:a, :b] 합."""
-        H, W = allow.shape
-        sat = np.zeros((H + 1, W + 1), dtype=np.int32)
-        np.cumsum(np.cumsum(allow, axis=0, dtype=np.int32), axis=1,
-                  out=sat[1:, 1:])
-        return sat

@@ -10,7 +10,6 @@ import time
 import numpy as np
 
 from . import repair as rp
-from ._diag import PROBE
 from .crane import crane_blocks_resident, crane_obstructed
 from .raster import Raster
 
@@ -45,14 +44,9 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     mask_share=bool(getattr(cfg, "mask_cache_share", False)),
                     morph=bool(getattr(cfg, "scan_morph", False)))
     fail_stop = int(getattr(cfg, "dispatch_admit_fail_stop", 0) or 0)
-    # ΔF 파편화 항 (FLOP 캡 초과 시 결정론적 셧오프)
-    frag_w = float(getattr(cfg, "dispatch_fragdelta", 0.0) or 0.0)
-    frag_q = int(getattr(cfg, "fragdelta_q", 4) or 0)
-    frag_cap = float(getattr(cfg, "fragdelta_flop_cap", 2e9))
-    frag_dens = float(getattr(cfg, "fragdelta_dens_hi", 0.0) or 0.0)
-    frag_flops, frag_alive = 0.0, True
+
     def _dens0(j):
-        # bay j의 layer-0 점유밀도 (ΔF 형성기 게이트용)
+        # bay j의 layer-0 점유밀도 (near-main 형성기 게이트용)
         g = raster.occ[j].get(0)
         if g is None:
             return 0.0
@@ -188,22 +182,45 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     return True
         return False
 
-    def _try_admit(i, j, t, rank=0, earlier=0, futures=None):
-        nonlocal nm_flops, nm_alive, oc_n
+    def _near_grid(i, j, o, allow, cap, r_lo, r_hi, c_lo, c_hi):
+        """near-main 합류: 얕은-겹침(count<=K) 앵커를 같은 접촉-순위 경쟁에 올린다.
+        반환 (grid, budget, near) -- near=None 이면 main-only (near 셀만 exact 검사)."""
+        nonlocal nm_flops, nm_alive
+        if nm_k <= 0 or not nm_alive \
+                or not (nm_dens <= 0.0 or _dens0(j) < nm_dens):
+            return allow, cap, None
+        _cs = raster._cscan.get(j, {}).get((i, o))
+        if _cs is None or _cs[0] != raster.ver[j]:
+            _mk, _, _ = raster.mask(i, o)
+            _Kq, _MHq, _MWq = _mk.shape
+            proxy = (float(max(raster.H[j] - _MHq + 1, 0))
+                     * max(raster.W[j] - _MWq + 1, 0) * _MHq * _MWq * _Kq)
+            if nm_flops + proxy > nm_flop_cap:
+                nm_alive = False
+            else:
+                nm_flops += proxy
+        if not nm_alive:
+            return allow, cap, None
+        total, _, _ = raster.count_scan(j, i, o)
+        if total is None:
+            return allow, cap, None
+        near = np.zeros_like(allow)
+        _sub = total[r_lo:r_hi + 1, c_lo:c_hi + 1]
+        near[r_lo:r_hi + 1, c_lo:c_hi + 1] = (_sub > 0) & (_sub <= nm_k)
+        if not near.any():
+            return allow, cap, None
+        return allow | near, cap + nm_cap, near
+
+    def _try_admit(i, j, t):
+        nonlocal oc_n
         # 마감 후 스캔 미진입
         if deadline is not None and time.perf_counter() >= deadline:
             return False
         xt = t + P[i]
         cap = (cfg.dispatch_cand_cap_hi if len(queue[j]) >= cfg.dispatch_queue_hi
                else cfg.dispatch_cand_cap)
-        # ΔF 미래 표적 (자기 자신 제외)
-        futs = None
-        if futures:
-            futs = [f for f in futures if f[0] != i] or None
         if orient_joint and len(pre.poly[i]) > 1:
-            return _admit_joint(i, j, t, xt, cap, futs, rank, earlier)
-        any_space = False
-        feas_anchors = cells_tried = gate_rej = 0
+            return _admit_joint(i, j, t, xt, cap)
         for o in range(len(pre.poly[i])):
             (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
             if x_lo > x_hi or y_lo > y_hi:
@@ -217,48 +234,18 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
             if r_lo > r_hi or c_lo > c_hi:
                 continue
             allow[r_lo:r_hi + 1, c_lo:c_hi + 1] = feas[r_lo:r_hi + 1, c_lo:c_hi + 1]
-            n_ok = int(allow.sum())
-            if n_ok:
-                any_space = True
-                feas_anchors += n_ok
-            # near-main: 얕은-겹침 후보를 같은 접촉-순위에 합류 (near 후보만 exact 검사)
-            grid, budget, near = allow, cap, None
-            if nm_k > 0 and nm_alive \
-                    and (nm_dens <= 0.0 or _dens0(j) < nm_dens):
-                _cs = raster._cscan.get(j, {}).get((i, o))
-                if _cs is None or _cs[0] != raster.ver[j]:
-                    _mk, _, _ = raster.mask(i, o)
-                    _Kq, _MHq, _MWq = _mk.shape
-                    proxy = (float(max(raster.H[j] - _MHq + 1, 0))
-                             * max(raster.W[j] - _MWq + 1, 0) * _MHq * _MWq * _Kq)
-                    if nm_flops + proxy > nm_flop_cap:
-                        nm_alive = False
-                    else:
-                        nm_flops += proxy
-                if nm_alive:
-                    total, _, _ = raster.count_scan(j, i, o)
-                    if total is not None:
-                        near = np.zeros_like(allow)
-                        _sub = total[r_lo:r_hi + 1, c_lo:c_hi + 1]
-                        near[r_lo:r_hi + 1, c_lo:c_hi + 1] = \
-                            (_sub > 0) & (_sub <= nm_k)
-                        if near.any():
-                            grid = allow | near
-                            budget = cap + nm_cap
-                        else:
-                            near = None
-            cells = raster.order_cells(j, i, o, grid, budget, futs, frag_w)
+            grid, budget, near = _near_grid(i, j, o, allow, cap,
+                                            r_lo, r_hi, c_lo, c_hi)
+            cells = raster.order_cells(j, i, o, grid, budget)
             if cells:
                 oc_n += 1
                 if oc_n == flip_call and len(cells) > 1:
                     cells = cells[1:] + cells[:1]
             for (r, c) in cells:
-                cells_tried += 1
                 pos = (int(c) - mx0, int(r) - my0)
                 if near is not None and not allow[r, c]:
                     if not nes_space.space_ok(j, raster.ver[j], i, o, pos,
                                               placed[j], coords, orient):
-                        gate_rej += 1
                         continue
                 if _exact_gate(i, j, o, pos, xt):
                     coords[i] = pos
@@ -267,28 +254,18 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                     exit_[i] = xt
                     raster.add(j, i, o, pos)
                     placed[j].append(i)
-                    PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
-                                     feas_anchors, cells_tried, gate_rej)
                     return True
-                gate_rej += 1
         # hull-nestle 회수: mask 패스 전멸 시에만
         if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
-            PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
-                             feas_anchors, cells_tried, gate_rej)
             return True
-        PROBE.on_attempt(t, j, i, rank, earlier,
-                         "gate_fail" if any_space else "no_space",
-                         feas_anchors, cells_tried, gate_rej)
         return False
 
-    def _admit_joint(i, j, t, xt, cap, futs, rank, earlier):
+    def _admit_joint(i, j, t, xt, cap):
         """orient-합동 순위: 전 orientation 후보를 접촉점수로 병합해 전역 순위로 admit.
         placement마다 동일 _exact_gate/space_ok 통과 = soundness 불변, 순서만 병합."""
-        nonlocal nm_flops, nm_alive, oc_n
+        nonlocal oc_n
         pool = []
         meta = {}
-        any_space = False
-        feas_anchors = 0
         for o in range(len(pre.poly[i])):
             (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
             if x_lo > x_hi or y_lo > y_hi:
@@ -302,37 +279,9 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                 continue
             allow = np.zeros_like(feas)
             allow[r_lo:r_hi + 1, c_lo:c_hi + 1] = feas[r_lo:r_hi + 1, c_lo:c_hi + 1]
-            n_ok = int(allow.sum())
-            if n_ok:
-                any_space = True
-                feas_anchors += n_ok
-            grid, budget, near = allow, cap, None
-            if nm_k > 0 and nm_alive \
-                    and (nm_dens <= 0.0 or _dens0(j) < nm_dens):
-                _cs = raster._cscan.get(j, {}).get((i, o))
-                if _cs is None or _cs[0] != raster.ver[j]:
-                    _mk, _, _ = raster.mask(i, o)
-                    _Kq, _MHq, _MWq = _mk.shape
-                    proxy = (float(max(raster.H[j] - _MHq + 1, 0))
-                             * max(raster.W[j] - _MWq + 1, 0) * _MHq * _MWq * _Kq)
-                    if nm_flops + proxy > nm_flop_cap:
-                        nm_alive = False
-                    else:
-                        nm_flops += proxy
-                if nm_alive:
-                    total, _, _ = raster.count_scan(j, i, o)
-                    if total is not None:
-                        near = np.zeros_like(allow)
-                        _sub = total[r_lo:r_hi + 1, c_lo:c_hi + 1]
-                        near[r_lo:r_hi + 1, c_lo:c_hi + 1] = \
-                            (_sub > 0) & (_sub <= nm_k)
-                        if near.any():
-                            grid = allow | near
-                            budget = cap + nm_cap
-                        else:
-                            near = None
-            cells = raster.order_cells(j, i, o, grid, budget, futs, frag_w,
-                                       with_vals=True)
+            grid, budget, near = _near_grid(i, j, o, allow, cap,
+                                            r_lo, r_hi, c_lo, c_hi)
+            cells = raster.order_cells(j, i, o, grid, budget, with_vals=True)
             if cells:
                 oc_n += 1
                 if oc_n == flip_call and len(cells) > 1:
@@ -342,24 +291,16 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                 pool.append((v, o, r, c, near is not None and not allow[r, c]))
         if not pool:
             if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
-                PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
-                                 feas_anchors, 0, 0)
                 return True
-            PROBE.on_attempt(t, j, i, rank, earlier,
-                             "gate_fail" if any_space else "no_space",
-                             feas_anchors, 0, 0)
             return False
         # 전역 접촉점수 내림차순 (동점 tie-break = order_cells와 동형: r, c; 안정정렬 = orient순)
         pool.sort(key=lambda e: (-e[0], e[2], e[3]))
-        cells_tried = gate_rej = 0
         for (v, o, r, c, is_near) in pool:
-            cells_tried += 1
             allow, near, mx0, my0 = meta[o]
             pos = (int(c) - mx0, int(r) - my0)
             if is_near:
                 if not nes_space.space_ok(j, raster.ver[j], i, o, pos,
                                           placed[j], coords, orient):
-                    gate_rej += 1
                     continue
             if _exact_gate(i, j, o, pos, xt):
                 coords[i] = pos
@@ -368,17 +309,9 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                 exit_[i] = xt
                 raster.add(j, i, o, pos)
                 placed[j].append(i)
-                PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
-                                 feas_anchors, cells_tried, gate_rej)
                 return True
-            gate_rej += 1
         if nes_k > 0 and nes_alive and _try_nestle(i, j, t, xt):
-            PROBE.on_attempt(t, j, i, rank, earlier, "admitted",
-                             feas_anchors, cells_tried, gate_rej)
             return True
-        PROBE.on_attempt(t, j, i, rank, earlier,
-                         "gate_fail" if any_space else "no_space",
-                         feas_anchors, cells_tried, gate_rej)
         return False
 
     # -- 이벤트 루프 -----------------------------------------------------------
@@ -391,7 +324,6 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
     while ev:
         t = heapq.heappop(ev)
         in_ev.discard(t)
-        PROBE.set_ctx(t, "exit")
         # ① exit 반영 (같은 tick EXIT-먼저)
         for j in range(pre.n_bays):
             keep = []
@@ -411,61 +343,14 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
         if deadline is not None and time.perf_counter() >= deadline:
             break
         # ③ ATC 순서 admission (동점 = 낮은 id)
-        PROBE.set_ctx(t, "admit")
         for j in range(pre.n_bays):
             if not queue[j]:
                 continue
-            # ΔF pre-pass: M* feasible 지도 SAT를 패스당 1회 구축(패스 중 낡아도 사용)
-            futures = None
-            if frag_w > 0.0 and frag_alive and frag_q > 0 \
-                    and len(queue[j]) >= int(getattr(cfg, "fragdelta_queue_hi", 6)) \
-                    and (frag_dens <= 0.0 or _dens0(j) < frag_dens):
-                pool = list(queue[j])
-                futures = []
-                for m in sorted(pool, key=lambda b: (-amin[b], b))[:frag_q]:
-                    if deadline is not None and time.perf_counter() >= deadline:
-                        break
-                    o_m = min(range(len(pre.poly[m])),
-                              key=lambda oo: pre.area[m][oo])
-                    (xl, xh), (yl, yh) = pre.IFP[m][o_m][j]
-                    if xl > xh or yl > yh:
-                        continue
-                    msk, _, _ = raster.mask(m, o_m)
-                    Km, MHm, MWm = msk.shape
-                    cached = raster._scan.get(j, {}).get((m, o_m))
-                    if cached is None or cached[0] != raster.ver[j]:
-                        # 신규/낡은 스캔만 전체-재계산 상한으로 계정(보수적)
-                        proxy = (float(max(raster.H[j] - MHm + 1, 0))
-                                 * max(raster.W[j] - MWm + 1, 0) * MHm * MWm * Km)
-                        if frag_flops + proxy > frag_cap:
-                            frag_alive = False
-                            break
-                        frag_flops += proxy
-                    feas_m, mxm, mym = raster.scan(j, m, o_m)
-                    if feas_m.size == 0:
-                        continue
-                    r_lo = max(0, yl + mym)
-                    r_hi = min(feas_m.shape[0] - 1, yh + mym)
-                    c_lo = max(0, xl + mxm)
-                    c_hi = min(feas_m.shape[1] - 1, xh + mxm)
-                    if r_lo > r_hi or c_lo > c_hi:
-                        continue
-                    allow_m = np.zeros_like(feas_m)
-                    allow_m[r_lo:r_hi + 1, c_lo:c_hi + 1] = \
-                        feas_m[r_lo:r_hi + 1, c_lo:c_hi + 1]
-                    tot = int(allow_m.sum())
-                    if tot == 0:
-                        continue
-                    futures.append((m, MHm, MWm, Raster.sat_of(allow_m), tot))
-                if not futures:
-                    futures = None
-            _earlier = 0     # 같은 pass 내 선행 admit 수 (진단)
             _fails = 0       # 마지막 admit 이후 연속 실패 (fail_stop 카운터)
-            for _rank, i in enumerate(sorted(queue[j], key=lambda b: _order_key(b, t))):
+            for i in sorted(queue[j], key=lambda b: _order_key(b, t)):
                 if deadline is not None and time.perf_counter() >= deadline:
                     break
-                if _try_admit(i, j, t, _rank, _earlier, futures):
-                    _earlier += 1
+                if _try_admit(i, j, t):
                     _fails = 0
                     queue[j].remove(i)
                     if dyn_bay:
@@ -481,7 +366,7 @@ def dispatch_construct(prob_info: dict, p1_out, pre, cfg, deadline=None):
                         cands = sorted((b for b in elig_bays[i] if b != j),
                                        key=lambda b: bay_occ[b] / bay_area[b])
                         for j2 in cands:
-                            if _try_admit(i, j2, t, _rank, _earlier):
+                            if _try_admit(i, j2, t):
                                 bay[i] = j2
                                 bay_occ[j2] += amin[i]
                                 queue[j].remove(i)

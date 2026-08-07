@@ -5,6 +5,7 @@ from __future__ import annotations
 from Phase1.common import eligible
 from Phase2.crane import _load_utils
 from Phase2.driver import build_solution
+from Phase2.repair import force_corner
 from .state import Solution
 
 LAST_FLOOR = {"sol": None}
@@ -19,16 +20,6 @@ def _pick_bay(pre, i, tails, prefs):
     return cands[0]
 
 
-def _corner(pre, i, j):
-    for o in range(len(pre.poly[i])):
-        (x_lo, x_hi), (y_lo, y_hi) = pre.IFP[i][o][j]
-        if x_lo <= x_hi and y_lo <= y_hi:
-            return o, (x_lo, y_lo)
-    # 폴백: orientation 0 코너
-    (x_lo, _), (y_lo, _) = pre.IFP[i][0][j]
-    return 0, (x_lo, y_lo)
-
-
 def emergency_floor(prob_info: dict, pre) -> Solution:
     blocks = prob_info["blocks"]
     n = len(blocks)
@@ -41,7 +32,7 @@ def emergency_floor(prob_info: dict, pre) -> Solution:
     tails = [0] * pre.n_bays
     for i in sorted(range(n), key=lambda k: (R[k], k)):
         j = _pick_bay(pre, i, tails, prefs)
-        o, pos = _corner(pre, i, j)
+        pos, o = force_corner(i, j, pre)
         e = max(int(R[i]), tails[j])
         bay[i], orient[i], coords[i] = j, o, pos
         entry[i], exit_[i] = e, e + P[i]
